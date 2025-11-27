@@ -13,7 +13,7 @@ interface AppState {
   contactsLoading: boolean;
 
   // Supabase
-  supabase: SupabaseConfig | null;
+  whatsapp: WhatsAppConnection | null;
   supabaseLoading: boolean;
 
   // AI
@@ -36,19 +36,16 @@ interface AppState {
   assignmentsLoading: boolean;
 
   // Stats
-  stats: Stats | null;
   statsLoading: boolean;
 
   // Actions
   updateWhatsApp: (connection: WhatsAppConnection | null) => void;
   updateWhatsAppContacts: (contacts: any[]) => void;
-  updateSupabase: (config: SupabaseConfig | null) => void;
   updateAIConfigs: (configs: Record<AIProvider, AIConfig>) => void;
   setActiveAIProvider: (provider: AIProvider | null) => void;
   updateAPIKeys: (keys: APIKey[], stats: APIKeyStats | null) => void;
   updateAgents: (agents: Agent[], stats: AgentStats | null) => void;
   updateAgentAssignments: (assignments: AgentAssignment[]) => void;
-  updateStats: (stats: Stats | null) => void;
 
   // Loaders
   loadWhatsAppStatus: () => Promise<void>;
