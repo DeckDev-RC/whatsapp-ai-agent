@@ -91,3 +91,19 @@ volumes:
 #### 3. Deploy no Portainer
 
 Agora vai funcionar porque as imagens já existem localmente!
+
+## 🛠️ Troubleshooting
+
+### Erro: "The network ... cannot be used with services"
+
+Se você ver um erro como:
+`The network whatsapp-ai-agent_whatsapp-internal cannot be used with services. Only networks scoped to the swarm can be used`
+
+Isso significa que existe uma rede antiga criada incorretamente (provavelmente por um `docker-compose up` manual).
+
+**Solução:**
+Execute no terminal da VPS:
+```bash
+docker network rm whatsapp-ai-agent_whatsapp-internal
+```
+E tente o deploy novamente.
