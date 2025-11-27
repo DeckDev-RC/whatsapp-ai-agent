@@ -12,7 +12,7 @@ services:
       - PORT=3000
     restart: unless-stopped
     networks:
-      - traefik_public
+      - SavyCoreNet
       - whatsapp-internal
     labels:
       - "traefik.enable=true"
@@ -20,6 +20,7 @@ services:
       - "traefik.http.routers.whatsapp-backend.entrypoints=websecure"
       - "traefik.http.routers.whatsapp-backend.tls.certresolver=letsencrypt"
       - "traefik.http.services.whatsapp-backend.loadbalancer.server.port=3000"
+      - "traefik.docker.network=SavyCoreNet"
 
   frontend:
     build: ./frontend
@@ -28,7 +29,7 @@ services:
       - backend
     restart: unless-stopped
     networks:
-      - traefik_public
+      - SavyCoreNet
       - whatsapp-internal
     labels:
       - "traefik.enable=true"
@@ -36,6 +37,7 @@ services:
       - "traefik.http.routers.whatsapp-frontend.entrypoints=websecure"
       - "traefik.http.routers.whatsapp-frontend.tls.certresolver=letsencrypt"
       - "traefik.http.services.whatsapp-frontend.loadbalancer.server.port=80"
+      - "traefik.docker.network=SavyCoreNet"
       # Redirect HTTP to HTTPS
       - "traefik.http.routers.whatsapp-frontend-http.rule=Host(`savycore.com.br`)"
       - "traefik.http.routers.whatsapp-frontend-http.entrypoints=web"
@@ -43,7 +45,7 @@ services:
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
 
 networks:
-  traefik_public:
+  SavyCoreNet:
     external: true
   whatsapp-internal:
     driver: bridge
