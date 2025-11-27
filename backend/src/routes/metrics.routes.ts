@@ -79,27 +79,6 @@ export function metricsRoutes() {
         }
     });
 
-    // Get current quotas
-    router.get('/quotas', async (req: Request, res: Response) => {
-        try {
-            const quotas = observabilityManager.getCurrentQuotas();
-            res.json({ success: true, data: quotas });
-        } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
-    // Get queue stats
-    router.get('/queue', async (req: Request, res: Response) => {
-        try {
-            const provider = req.query.provider as AIProvider | undefined;
-            const stats = queueManager.getQueueStats(provider);
-            res.json({ success: true, data: stats });
-        } catch (error: any) {
-            res.status(500).json({ success: false, error: error.message });
-        }
-    });
-
     // Get cache stats
     router.get('/cache', async (req: Request, res: Response) => {
         try {

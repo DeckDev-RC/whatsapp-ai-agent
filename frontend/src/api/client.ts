@@ -181,6 +181,7 @@ export const api = {
 // Aliases for backward compatibility with Electron API structure
 (api as any).supabase = api.database;
 (api as any).agent = api.agents;
+(api as any).tenant = api.tenants;
 (api as any).stats = {
     get: () => apiClient.get('/metrics/global')
 };
