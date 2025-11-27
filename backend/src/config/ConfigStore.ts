@@ -1,9 +1,9 @@
-import Store from 'electron-store';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
-import { app } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================
-// CONFIG STORE - Encrypted Storage
+// CONFIG STORE - File-based Encrypted Storage (Web Version)
 // ============================================
 
 interface StoreSchema {
@@ -32,20 +32,46 @@ interface StoreSchema {
 }
 
 class ConfigStore {
-  private store: Store<StoreSchema>;
+  private data: StoreSchema = {};
   private encryptionKey: Buffer;
+  private configPath: string;
 
   constructor() {
-    this.store = new Store<StoreSchema>({
-      name: 'whatsapp-ai-agent-config',
-      encryptionKey: 'whatsapp-ai-agent-2024', // Chave básica para o store
-    });
+    // Use environment variable or default path
+    const configDir = process.env.CONFIG_DIR || '/app/config';
+    this.configPath = path.join(configDir, 'config.json');
 
-    // Gerar chave de criptografia persistente baseada no userData path
-    // Isso garante que a mesma chave seja usada sempre para o mesmo usuário
-    const userDataPath = app.getPath('userData');
-    const keySeed = `whatsapp-ai-agent-encryption-${userDataPath}`;
+    // Ensure config directory exists
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // Generate encryption key
+    const keySeed = process.env.ENCRYPTION_SEED || 'whatsapp-ai-agent-encryption-default';
     this.encryptionKey = createHash('sha256').update(keySeed).digest();
+
+    // Load existing config
+    this.load();
+  }
+
+  private load(): void {
+    try {
+      if (fs.existsSync(this.configPath)) {
+        const fileContent = fs.readFileSync(this.configPath, 'utf8');
+        this.data = JSON.parse(fileContent);
+      }
+    } catch (error) {
+      console.error('Error loading config:', error);
+      this.data = {};
+    }
+  }
+
+  private save(): void {
+    try {
+      fs.writeFileSync(this.configPath, JSON.stringify(this.data, null, 2), 'utf8');
+    } catch (error) {
+      console.error('Error saving config:', error);
+    }
   }
 
   // ===== Encryption =====
@@ -69,19 +95,22 @@ class ConfigStore {
 
   // ===== Generic Methods =====
   get<K extends keyof StoreSchema>(key: K): StoreSchema[K] | undefined {
-    return this.store.get(key);
+    return this.data[key];
   }
 
   set<K extends keyof StoreSchema>(key: K, value: StoreSchema[K]): void {
-    this.store.set(key, value);
+    this.data[key] = value;
+    this.save();
   }
 
   delete<K extends keyof StoreSchema>(key: K): void {
-    this.store.delete(key);
+    delete this.data[key];
+    this.save();
   }
 
   clear(): void {
-    this.store.clear();
+    this.data = {};
+    this.save();
   }
 
   // ===== Secure API Key Storage =====
@@ -94,14 +123,15 @@ class ConfigStore {
     try {
       const cleanApiKey = apiKey.trim();
       const encrypted = this.encrypt(cleanApiKey);
-      const aiConfig = this.store.get('ai') || {};
-      this.store.set('ai', {
+      const aiConfig = this.data.ai || {};
+      this.data.ai = {
         ...aiConfig,
         [provider]: {
           ...(aiConfig[provider as keyof typeof aiConfig] as object || {}),
           apiKey: encrypted,
         },
-      });
+      };
+      this.save();
     } catch (error) {
       console.error(`Erro ao criptografar API key para ${provider}:`, error);
       throw new Error('Erro ao salvar API key');
@@ -109,7 +139,7 @@ class ConfigStore {
   }
 
   getSecureKey(provider: string): string | undefined {
-    const aiConfig = this.store.get('ai');
+    const aiConfig = this.data.ai;
     if (!aiConfig) return undefined;
 
     const providerConfig = aiConfig[provider as keyof typeof aiConfig] as { apiKey?: string };
@@ -126,4 +156,3 @@ class ConfigStore {
 }
 
 export const configStore = new ConfigStore();
-
