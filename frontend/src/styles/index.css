@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================ */
+/* GLOBAL STYLES - Liquid Glass Theme */
+/* ============================================ */
+
+@layer base {
+  * {
+    @apply border-border-glass;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  #root {
+    @apply h-screen w-screen overflow-hidden;
+  }
+
+  /* Scrollbar personalizado */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20;
+  }
+}
+
+/* ============================================ */
+/* UTILITY CLASSES */
+/* ============================================ */
+
+@layer components {
+
+  /* Glass Card */
+  .glass-card {
+    @apply bg-bg-glass backdrop-blur-glass border border-border-glass rounded-2xl shadow-2xl;
+  }
+
+  .glass-card-hover {
+    @apply glass-card hover:bg-white/10 transition-all duration-300;
+  }
+
+  /* Glass Input */
+  .glass-input {
+    @apply w-full bg-bg-glass border border-border-glass rounded-xl px-4 py-3 text-text-primary placeholder-text-secondary/40 focus:bg-white/10 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all outline-none cursor-text;
+  }
+
+  .glass-input:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .glass-input:read-only {
+    @apply cursor-default;
+  }
+
+  /* Glass Select - Dropdown styling */
+  .glass-select {
+    @apply glass-input cursor-pointer appearance-none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M10.293 3.293L6 7.586 1.707 3.293A1 1 0 00.293 4.707l5 5a1 1 0 001.414 0l5-5a1 1 0 10-1.414-1.414z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    padding-right: 3rem;
+  }
+
+  /* Style for select options */
+  .glass-select option {
+    @apply bg-slate-800 text-text-primary;
+    padding: 0.5rem 1rem;
+  }
+
+  .glass-select option:hover,
+  .glass-select option:focus,
+  .glass-select option:checked {
+    @apply bg-accent text-white;
+  }
+
+  /* Input class for selects */
+  select.input {
+    @apply glass-select;
+  }
+
+  select.input option {
+    @apply bg-slate-800 text-text-primary;
+  }
+
+  /* Button Primary */
+  .btn-primary {
+    @apply bg-accent hover:bg-accent-hover text-white px-6 py-3 rounded-xl font-medium transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Button Secondary */
+  .btn-secondary {
+    @apply bg-white/5 hover:bg-white/10 text-text-primary px-6 py-3 rounded-xl font-medium border border-white/10 transition-all duration-200 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  /* Button Danger */
+  .btn-danger {
+    @apply bg-red-500/10 hover:bg-red-500/20 text-red-400 px-6 py-3 rounded-xl font-medium border border-red-500/30 transition-all duration-200 active:scale-95;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-emerald-500/10 text-emerald-400 border border-emerald-500/30;
+  }
+
+  .badge-error {
+    @apply badge bg-red-500/10 text-red-400 border border-red-500/30;
+  }
+
+  .badge-warning {
+    @apply badge bg-yellow-500/10 text-yellow-400 border border-yellow-500/30;
+  }
+
+  .badge-info {
+    @apply badge bg-blue-500/10 text-blue-400 border border-blue-500/30;
+  }
+
+  /* Divider */
+  .divider {
+    @apply w-full h-px bg-white/10 my-6;
+  }
+}
+
+/* ============================================ */
+/* ANIMATIONS */
+/* ============================================ */
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+  background: linear-gradient(to right,
+      transparent 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      transparent 100%);
+  background-size: 1000px 100%;
+}
+
+/* Pulse animation for connection status */
+@keyframes pulse-glow {
+
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 10px currentColor;
+  }
+
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 20px currentColor;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}

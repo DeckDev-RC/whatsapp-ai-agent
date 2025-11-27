@@ -1,0 +1,33 @@
+# Backend
+node_modules/
+dist/
+.env
+*.log
+auth_info_baileys/
+uploads/
+
+# Frontend
+node_modules/
+dist/
+.env.local
+
+# Electron (antigo - não precisa mais)
+out/
+release/
+
+# SSL
+nginx/ssl/*.pem
+nginx/ssl/*.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
