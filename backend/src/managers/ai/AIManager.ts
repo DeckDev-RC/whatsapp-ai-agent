@@ -1405,3 +1405,5 @@ export class AIManager {
     throw lastError || new Error('Falha na transcrição de áudio com todos os modelos disponíveis.');
   }
 }
+
+export const aiManager = new AIManager();
