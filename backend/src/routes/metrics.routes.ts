@@ -3,10 +3,34 @@ import { observabilityManager } from '../managers/services/ObservabilityManager'
 import { queueManager } from '../managers/services/QueueManager';
 import { cacheManager } from '../managers/services/CacheManager';
 import { apiKeyManager } from '../managers/services/APIKeyManager';
+import { whatsappManager } from '../managers/services/WhatsAppManager';
+import { databaseManager } from '../managers/database/DatabaseManager';
+import { aiManager } from '../managers/services/AIManager';
 import type { AIProvider } from '../types';
 
 export function metricsRoutes() {
     const router = Router();
+
+    // Get global stats
+    router.get('/global', async (req: Request, res: Response) => {
+        try {
+            // Mock implementation for now if managers don't expose exact counts
+            // In a real implementation, we would add getCount() methods to managers
+            const activeTenants = 1; // Default to 1 for now
+            const messagesCount = 0; // Needs implementation in WhatsAppManager
+
+            const stats = {
+                messagesCount,
+                activeTenants,
+                activeModel: aiManager.getActiveProvider(),
+                whatsappConnected: whatsappManager.getStatus().isConnected,
+                databaseConnected: databaseManager.isConnected()
+            };
+            res.json({ success: true, data: stats });
+        } catch (error: any) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
 
     // Get endpoint stats
     router.get('/endpoint/:endpoint', async (req: Request, res: Response) => {

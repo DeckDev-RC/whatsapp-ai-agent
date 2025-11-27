@@ -177,3 +177,10 @@ export const api = {
         toggleAPIKey: (id: string) => apiClient.post(`/metrics/api-keys/${id}/toggle`)
     }
 };
+
+// Aliases for backward compatibility with Electron API structure
+(api as any).supabase = api.database;
+(api as any).agent = api.agents;
+(api as any).stats = {
+    get: () => apiClient.get('/metrics/global')
+};
