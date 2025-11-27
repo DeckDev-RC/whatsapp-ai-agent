@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import type { AIManager } from '../managers/ai/AIManager';
-import type { AIProvider, AIConfig } from '../types';
+import type { AIProvider, AIConfig } from '../shared/types';
 
 export function aiRoutes(aiManager: AIManager) {
     const router = Router();
