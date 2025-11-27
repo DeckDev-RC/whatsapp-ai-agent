@@ -555,22 +555,44 @@ export class WhatsAppManager {
       this.log('🗑️ LIMPEZA COMPLETA DE CREDENCIAIS');
       this.log('━'.repeat(40));
 
-      // Desconectar primeiro
-      if (this.sock) {
+      // 1. Desconectar primeiro se estiver conectado
+      if (this.isConnected || this.sock) {
+        this.log('🔌 Desconectando antes de limpar...');
         try {
-          await this.sock.logout();
+          if (this.sock) {
+            await this.sock.logout();
+            this.sock = null;
+          }
+          this.handleDisconnected();
+          // Aguardar um pouco para garantir que o socket fechou
+          await new Promise(resolve => setTimeout(resolve, 1500));
         } catch (error) {
-          this.log('⚠️ Erro ao fazer logout:', error);
+          this.log('⚠️ Erro ao desconectar:', error);
         }
-        this.sock = null;
       }
 
-      // Limpar pasta de autenticação
+      // 2. Limpar pasta de autenticação com retry
       const authPath = path.join(process.cwd(), 'auth_info_baileys');
 
       if (fs.existsSync(authPath)) {
-        fs.rmSync(authPath, { recursive: true, force: true });
-        this.log('✅ Pasta de autenticação removida');
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+          try {
+            fs.rmSync(authPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+            this.log('✅ Pasta de autenticação removida');
+            break;
+          } catch (error: any) {
+            attempts++;
+            if (error.code === 'EBUSY' && attempts < maxAttempts) {
+              this.log(`⏳ Diretório ocupado, tentativa ${attempts}/${maxAttempts}...`);
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            } else {
+              throw error;
+            }
+          }
+        }
       }
 
       this.handleDisconnected();
