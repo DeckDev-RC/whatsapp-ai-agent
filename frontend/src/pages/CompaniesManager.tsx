@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { GlassCard } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { Building2, Plus, Edit2, Trash2, Phone, Loader2, X } from 'lucide-react';
-import type { Tenant, WhatsAppNumber } from '../../shared/types';
+import type { Tenant, WhatsAppNumber } from '../shared/types';
 
 // ============================================
 // COMPANIES MANAGER PAGE

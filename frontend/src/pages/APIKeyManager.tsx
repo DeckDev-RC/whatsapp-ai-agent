@@ -1,4 +1,3 @@
-/// <reference types="../../preload/index.d.ts" />
 import { useState } from 'react';
 import { GlassCard, GlassCardHeader } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
@@ -17,7 +16,7 @@ import {
   AlertTriangle,
   Loader2,
 } from 'lucide-react';
-import type { AIProvider } from '../../shared/types';
+import type { AIProvider } from '../shared/types';
 import { showNotification } from '../components/Notification';
 import { useAppStore, forceRefresh } from '../store/appStore';
 
@@ -433,9 +432,8 @@ export function APIKeyManager() {
                   <div className="flex gap-2 pt-2 border-t border-white/10">
                     <button
                       onClick={() => handleToggleActive(key.id)}
-                      className={`btn-secondary flex-1 ${
-                        key.isActive ? 'bg-red-500/20 hover:bg-red-500/30' : 'bg-emerald-500/20 hover:bg-emerald-500/30'
-                      }`}
+                      className={`btn-secondary flex-1 ${key.isActive ? 'bg-red-500/20 hover:bg-red-500/30' : 'bg-emerald-500/20 hover:bg-emerald-500/30'
+                        }`}
                     >
                       {key.isActive ? (
                         <>

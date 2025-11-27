@@ -1,4 +1,3 @@
-/// <reference types="../../preload/index.d.ts" />
 import { useState } from 'react';
 import { GlassCard, GlassCardHeader } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
@@ -24,17 +23,17 @@ import { useAppStore, forceRefresh } from '../store/appStore';
 type TabType = 'groups' | 'private';
 
 export function AgentAssignments() {
-  const { 
-    agents, 
-    agentAssignments, 
+  const {
+    agents,
+    agentAssignments,
     whatsappContacts,
     whatsapp,
-    agentsLoading, 
+    agentsLoading,
     assignmentsLoading,
     contactsLoading,
     syncWhatsAppContacts,
   } = useAppStore();
-  
+
   const [activeTab, setActiveTab] = useState<TabType>('groups');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedContact, setSelectedContact] = useState<string | null>(null);
@@ -106,21 +105,21 @@ export function AgentAssignments() {
   const sortContacts = (contactsList: typeof contacts) => {
     // Filtra por busca
     const filtered = contactsList.filter((contact) => {
-    const searchLower = searchTerm.toLowerCase();
-    return (
-      contact.phone.includes(searchLower) ||
-      contact.name?.toLowerCase().includes(searchLower)
-    );
-  });
+      const searchLower = searchTerm.toLowerCase();
+      return (
+        contact.phone.includes(searchLower) ||
+        contact.name?.toLowerCase().includes(searchLower)
+      );
+    });
 
     // Ordena: com atribuição primeiro
     return filtered.sort((a, b) => {
       const aHasAgent = !!getAssignedAgent(a.phone);
       const bHasAgent = !!getAssignedAgent(b.phone);
-      
+
       if (aHasAgent && !bHasAgent) return -1;
       if (!aHasAgent && bHasAgent) return 1;
-      
+
       // Se ambos têm ou não têm agente, ordena por nome
       return (a.name || '').localeCompare(b.name || '');
     });
@@ -290,22 +289,22 @@ export function AgentAssignments() {
             <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
               <Bot className="w-6 h-6 text-blue-400" />
             </div>
-              <div>
-                <p className="text-2xl font-bold text-text-primary">{activeAgents.length || 0}</p>
-                <p className="text-sm text-text-secondary">Agentes Ativos</p>
-              </div>
+            <div>
+              <p className="text-2xl font-bold text-text-primary">{activeAgents.length || 0}</p>
+              <p className="text-sm text-text-secondary">Agentes Ativos</p>
             </div>
-          </GlassCard>
+          </div>
+        </GlassCard>
 
-          <GlassCard className="bg-gradient-to-br from-emerald-500/10 to-green-500/10">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                <Link className="w-6 h-6 text-emerald-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-text-primary">{agentAssignments.length || 0}</p>
-                <p className="text-sm text-text-secondary">Conversas Atribuídas</p>
-              </div>
+        <GlassCard className="bg-gradient-to-br from-emerald-500/10 to-green-500/10">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+              <Link className="w-6 h-6 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-text-primary">{agentAssignments.length || 0}</p>
+              <p className="text-sm text-text-secondary">Conversas Atribuídas</p>
+            </div>
           </div>
         </GlassCard>
 
@@ -392,11 +391,10 @@ export function AgentAssignments() {
       <div className="flex items-center gap-4 border-b border-white/10">
         <button
           onClick={() => setActiveTab('groups')}
-          className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${
-            activeTab === 'groups'
+          className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${activeTab === 'groups'
               ? 'border-purple-500 text-purple-400'
               : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
+            }`}
         >
           <Users className="w-5 h-5" />
           <span className="font-medium">Grupos</span>
@@ -407,11 +405,10 @@ export function AgentAssignments() {
 
         <button
           onClick={() => setActiveTab('private')}
-          className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${
-            activeTab === 'private'
+          className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${activeTab === 'private'
               ? 'border-blue-500 text-blue-400'
               : 'border-transparent text-text-secondary hover:text-text-primary'
-          }`}
+            }`}
         >
           <User className="w-5 h-5" />
           <span className="font-medium">Conversas Privadas</span>

@@ -1,10 +1,10 @@
-/// <reference types="../../preload/index.d.ts" />
+
 import { useEffect, useState } from 'react';
 import { GlassCard, GlassCardHeader } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { Brain, Check, Loader2, RefreshCw, Key, Eye, EyeOff, CheckCircle, Circle, ArrowRight } from 'lucide-react';
-import type { AIProvider, AIConfig } from '../../shared/types';
-import { AI_MODELS, DEFAULT_AI_CONFIG } from '../../shared/constants';
+import type { AIProvider, AIConfig } from '../shared/types';
+import { AI_MODELS, DEFAULT_AI_CONFIG } from '../shared/constants';
 import { useAppStore, forceRefresh } from '../store/appStore';
 import { showNotification } from '../components/Notification';
 
@@ -36,7 +36,7 @@ export function AIConfiguration() {
     const initialized: Record<AIProvider, AIConfig> = {} as Record<AIProvider, AIConfig>;
     providers.forEach(provider => {
       const savedConfig = aiConfigs?.[provider.id];
-      
+
       initialized[provider.id] = {
         ...DEFAULT_AI_CONFIG,
         provider: provider.id,
@@ -73,7 +73,7 @@ export function AIConfiguration() {
         showNotification('success', '✅ Conexão bem-sucedida! Agora salve a configuração.');
       } else {
         let errorMessage = response.error || 'Falha na conexão';
-        
+
         if (errorMessage.includes('401') || errorMessage.includes('invalid_api_key') || errorMessage.includes('Incorrect API key')) {
           errorMessage = 'API key incorreta. Verifique se copiou a chave completa.';
         } else if (errorMessage.includes('403')) {
@@ -128,13 +128,13 @@ export function AIConfiguration() {
   const handleActivate = async (provider: AIProvider) => {
     console.log(`[AIConfiguration] handleActivate chamado para ${provider}`);
     const savedConfig = aiConfigs?.[provider];
-    
+
     console.log(`[AIConfiguration] Config salva:`, {
       hasApiKey: !!savedConfig?.apiKey,
       hasModel: !!savedConfig?.model,
       savedConfig
     });
-    
+
     if (!savedConfig?.apiKey || !savedConfig?.model) {
       console.warn(`[AIConfiguration] Config incompleta, abortando ativação`);
       showNotification('warning', 'Salve a configuração primeiro antes de ativar');
@@ -146,7 +146,7 @@ export function AIConfiguration() {
       console.log(`[AIConfiguration] Chamando window.api.ai.setActive(${provider})`);
       const response = await window.api.ai.setActive(provider);
       console.log(`[AIConfiguration] Resposta do setActive:`, response);
-      
+
       if (response.success) {
         setActiveAIProvider(provider);
         forceRefresh();
@@ -290,20 +290,18 @@ export function AIConfiguration() {
               <GlassCardHeader
                 title={
                   <div className="flex items-center gap-3">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                      state.isActive 
-                        ? 'bg-emerald-500/20 ring-2 ring-emerald-500/50' 
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${state.isActive
+                        ? 'bg-emerald-500/20 ring-2 ring-emerald-500/50'
                         : state.isSaved
-                        ? 'bg-blue-500/20'
-                        : 'bg-white/5'
-                    }`}>
-                      <Brain className={`w-6 h-6 ${
-                        state.isActive 
-                          ? 'text-emerald-400' 
+                          ? 'bg-blue-500/20'
+                          : 'bg-white/5'
+                      }`}>
+                      <Brain className={`w-6 h-6 ${state.isActive
+                          ? 'text-emerald-400'
                           : state.isSaved
-                          ? 'text-blue-400'
-                          : 'text-text-secondary'
-                      }`} />
+                            ? 'text-blue-400'
+                            : 'text-text-secondary'
+                        }`} />
                     </div>
                     <div>
                       <h3 className="text-xl font-semibold text-text-primary">{provider.name}</h3>
@@ -317,9 +315,8 @@ export function AIConfiguration() {
                 {/* Progress Indicator */}
                 <div className="grid grid-cols-4 gap-2">
                   <div className="text-center">
-                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${
-                      config.apiKey && config.model ? 'bg-emerald-500/20' : 'bg-white/5'
-                    }`}>
+                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${config.apiKey && config.model ? 'bg-emerald-500/20' : 'bg-white/5'
+                      }`}>
                       {config.apiKey && config.model ? (
                         <CheckCircle className="w-5 h-5 text-emerald-400" />
                       ) : (
@@ -329,9 +326,8 @@ export function AIConfiguration() {
                     <span className="text-xs text-text-secondary">Configurar</span>
                   </div>
                   <div className="text-center">
-                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${
-                      isTesting ? 'bg-blue-500/20' : 'bg-white/5'
-                    }`}>
+                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${isTesting ? 'bg-blue-500/20' : 'bg-white/5'
+                      }`}>
                       {isTesting ? (
                         <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
                       ) : (
@@ -341,9 +337,8 @@ export function AIConfiguration() {
                     <span className="text-xs text-text-secondary">Testar</span>
                   </div>
                   <div className="text-center">
-                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${
-                      state.isSaved ? 'bg-emerald-500/20' : 'bg-white/5'
-                    }`}>
+                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${state.isSaved ? 'bg-emerald-500/20' : 'bg-white/5'
+                      }`}>
                       {state.isSaved ? (
                         <CheckCircle className="w-5 h-5 text-emerald-400" />
                       ) : (
@@ -353,9 +348,8 @@ export function AIConfiguration() {
                     <span className="text-xs text-text-secondary">Salvo</span>
                   </div>
                   <div className="text-center">
-                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${
-                      state.isActive ? 'bg-emerald-500/20 ring-2 ring-emerald-500/50' : 'bg-white/5'
-                    }`}>
+                    <div className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center mb-1 ${state.isActive ? 'bg-emerald-500/20 ring-2 ring-emerald-500/50' : 'bg-white/5'
+                      }`}>
                       {state.isActive ? (
                         <CheckCircle className="w-5 h-5 text-emerald-400" />
                       ) : (

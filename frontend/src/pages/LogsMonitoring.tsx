@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { GlassCard, GlassCardHeader } from '../components/GlassCard';
 import { Activity, User, Bot, Loader2, Filter } from 'lucide-react';
-import type { Conversation, Tenant, TypingIndicator } from '../../shared/types';
+import type { Conversation, Tenant, TypingIndicator } from '../shared/types';
 
 // ============================================
 // LOGS & MONITORING PAGE
@@ -180,8 +180,8 @@ export function LogsMonitoring() {
               <div
                 key={conv.id}
                 className={`p-4 rounded-xl border transition-all ${conv.role === 'user'
-                    ? 'bg-blue-500/5 border-blue-500/20'
-                    : 'bg-purple-500/5 border-purple-500/20'
+                  ? 'bg-blue-500/5 border-blue-500/20'
+                  : 'bg-purple-500/5 border-purple-500/20'
                   }`}
               >
                 <div className="flex items-start gap-3">

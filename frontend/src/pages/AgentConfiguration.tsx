@@ -1,4 +1,3 @@
-/// <reference types="../../preload/index.d.ts" />
 import { useState } from 'react';
 import { GlassCard, GlassCardHeader } from '../components/GlassCard';
 import { StatusBadge } from '../components/StatusBadge';
@@ -15,8 +14,8 @@ import {
   MessageSquare,
   Activity,
 } from 'lucide-react';
-import type { Agent, AIProvider } from '../../shared/types';
-import { AI_MODELS } from '../../shared/constants';
+import type { Agent, AIProvider } from '../shared/types';
+import { AI_MODELS } from '../shared/constants';
 import { showNotification } from '../components/Notification';
 import { useAppStore, forceRefresh } from '../store/appStore';
 
@@ -217,8 +216,8 @@ export function AgentConfiguration() {
               Como funcionam os Agentes?
             </h3>
             <p className="text-sm text-text-secondary">
-              Agentes são assistentes de IA que você configura uma vez e atribui a conversas do WhatsApp. 
-              Eles usam automaticamente as API keys que você gerenciou em "API Keys", com rotação inteligente e fallback. 
+              Agentes são assistentes de IA que você configura uma vez e atribui a conversas do WhatsApp.
+              Eles usam automaticamente as API keys que você gerenciou em "API Keys", com rotação inteligente e fallback.
               Cada agente pode ter seu próprio modelo, temperature e system prompt personalizado.
             </p>
           </div>
@@ -487,11 +486,10 @@ export function AgentConfiguration() {
                     <div className="flex gap-2 pt-2 border-t border-white/10">
                       <button
                         onClick={() => handleToggleActive(agent.id)}
-                        className={`btn-secondary flex-1 ${
-                          agent.isActive
+                        className={`btn-secondary flex-1 ${agent.isActive
                             ? 'bg-orange-500/20 hover:bg-orange-500/30'
                             : 'bg-emerald-500/20 hover:bg-emerald-500/30'
-                        }`}
+                          }`}
                       >
                         {agent.isActive ? 'Desativar' : 'Ativar'}
                       </button>

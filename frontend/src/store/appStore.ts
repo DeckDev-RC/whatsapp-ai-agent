@@ -1,16 +1,5 @@
 import { create } from 'zustand';
-import type { 
-  WhatsAppConnection, 
-  SupabaseConfig, 
-  AIConfig, 
-  AIProvider, 
-  Stats, 
-  Agent, 
-  AgentAssignment,
-  AgentStats,
-  APIKey,
-  APIKeyStats
-} from '../../shared/types';
+import type { Agent, AIConfig, AIProvider, Tenant, WhatsAppNumber, Conversation, WhatsAppConnection, AgentAssignment, APIKey, APIKeyStats, AgentStats } from '../shared/types';
 
 // ============================================
 // APP STORE - Estado Global da Aplicação
@@ -22,34 +11,34 @@ interface AppState {
   whatsappLoading: boolean;
   whatsappContacts: any[];
   contactsLoading: boolean;
-  
+
   // Supabase
   supabase: SupabaseConfig | null;
   supabaseLoading: boolean;
-  
+
   // AI
   aiConfigs: Record<AIProvider, AIConfig> | null;
   activeAIProvider: AIProvider | null;
   aiLoading: boolean;
-  
+
   // API Keys
   apiKeys: APIKey[];
   apiKeyStats: APIKeyStats | null;
   apiKeysLoading: boolean;
-  
+
   // Agents
   agents: Agent[];
   agentStats: AgentStats | null;
   agentsLoading: boolean;
-  
+
   // Agent Assignments
   agentAssignments: AgentAssignment[];
   assignmentsLoading: boolean;
-  
+
   // Stats
   stats: Stats | null;
   statsLoading: boolean;
-  
+
   // Actions
   updateWhatsApp: (connection: WhatsAppConnection | null) => void;
   updateWhatsAppContacts: (contacts: any[]) => void;
@@ -60,7 +49,7 @@ interface AppState {
   updateAgents: (agents: Agent[], stats: AgentStats | null) => void;
   updateAgentAssignments: (assignments: AgentAssignment[]) => void;
   updateStats: (stats: Stats | null) => void;
-  
+
   // Loaders
   loadWhatsAppStatus: () => Promise<void>;
   loadWhatsAppContacts: () => Promise<void>;
@@ -122,10 +111,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         break;
       }
     }
-    
-    set({ 
+
+    set({
       aiConfigs: configs,
-      activeAIProvider: activeProvider 
+      activeAIProvider: activeProvider
     });
   },
 
@@ -198,10 +187,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ aiLoading: true });
     try {
       const response = await window.api.ai.getConfig();
-      
+
       if (response.success && response.data) {
         const configs = response.data as Record<AIProvider, AIConfig>;
-        
+
         // Encontrar provider ativo
         let activeProvider: AIProvider | null = null;
         for (const [provider, config] of Object.entries(configs)) {
@@ -210,10 +199,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             break;
           }
         }
-        
-        set({ 
+
+        set({
           aiConfigs: configs,
-          activeAIProvider: activeProvider 
+          activeAIProvider: activeProvider
         });
       }
     } catch (error) {
@@ -299,7 +288,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ assignmentsLoading: true });
     try {
       const response = await window.api.agent.getAllAssignments();
-      
+
       if (response.success && response.data) {
         set({ agentAssignments: response.data });
       }
@@ -326,7 +315,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       // Buscar contatos diretamente do WhatsApp (sem sincronizar com banco)
       const response = await window.api.whatsapp.getContacts();
-      
+
       if (response.success && response.data) {
         set({ whatsappContacts: response.data });
         console.log(`[AppStore] ${response.data.length} contatos carregados do WhatsApp (modo local)`);
@@ -342,13 +331,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ contactsLoading: true });
     try {
       const response = await window.api.whatsapp.syncContacts();
-      
+
       if (response.success && response.data) {
         set({ whatsappContacts: response.data.contacts });
         console.log(`[AppStore] Sincronizados ${response.data.syncResult.synced} contatos`);
         return response.data.syncResult;
       }
-      
+
       return { synced: 0, errors: 0 };
     } catch (error) {
       console.error('[AppStore] Erro ao sincronizar contatos WhatsApp:', error);
@@ -361,10 +350,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadAll: async () => {
     // Evita múltiplas chamadas simultâneas de loadAll
     const currentState = get();
-    if (currentState.whatsappLoading || currentState.aiLoading || 
-        currentState.supabaseLoading || currentState.statsLoading ||
-        currentState.apiKeysLoading || currentState.agentsLoading ||
-        currentState.assignmentsLoading || currentState.contactsLoading) {
+    if (currentState.whatsappLoading || currentState.aiLoading ||
+      currentState.supabaseLoading || currentState.statsLoading ||
+      currentState.apiKeysLoading || currentState.agentsLoading ||
+      currentState.assignmentsLoading || currentState.contactsLoading) {
       return; // Já há um carregamento em andamento
     }
 
