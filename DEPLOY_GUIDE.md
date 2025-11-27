@@ -1,6 +1,6 @@
-# 🚀 Guia de Deploy no Portainer - SIMPLIFICADO
+# 🚀 Guia de Deploy no Portainer com Traefik
 
-Deploy do WhatsApp AI Agent no Portainer (savycore.com.br) **SEM Docker Hub**
+Deploy do WhatsApp AI Agent no Portainer (savycore.com.br) usando **Traefik** para SSL automático
 
 ---
 
@@ -8,6 +8,7 @@ Deploy do WhatsApp AI Agent no Portainer (savycore.com.br) **SEM Docker Hub**
 
 - ✅ VPS com Docker e Docker Compose instalados
 - ✅ Portainer instalado e rodando
+- ✅ **Traefik já configurado** (você já tem!)
 - ✅ Domínio savycore.com.br apontando para o IP da VPS
 - ✅ Acesso SSH à VPS
 
@@ -46,81 +47,30 @@ git push -u origin main
 ### 2.1 Conectar na VPS
 
 ```bash
-ssh usuario@IP_DA_VPS
+ssh root@31.97.243.107
 ```
 
 ### 2.2 Clonar o Repositório
 
 ```bash
 # Criar diretório
-sudo mkdir -p /opt/whatsapp-app
+mkdir -p /opt/whatsapp-app
 cd /opt
 
 # Clonar repositório
 git clone https://github.com/SEU_USUARIO/whatsapp-ai-agent.git whatsapp-app
 cd whatsapp-app
-
-# Dar permissões
-sudo chown -R $USER:$USER /opt/whatsapp-app
 ```
 
-### 2.3 Configurar SSL (Let's Encrypt)
+### 2.3 Criar docker-compose com Traefik
+
+Editar o `docker-compose.yml`:
 
 ```bash
-# Instalar certbot
-sudo apt update
-sudo apt install certbot -y
-
-# Gerar certificado
-sudo certbot certonly --standalone -d savycore.com.br -d www.savycore.com.br
-
-# Criar pasta SSL
-mkdir -p nginx/ssl
-
-# Copiar certificados
-sudo cp /etc/letsencrypt/live/savycore.com.br/fullchain.pem nginx/ssl/
-sudo cp /etc/letsencrypt/live/savycore.com.br/privkey.pem nginx/ssl/
-
-# Dar permissões
-sudo chmod 644 nginx/ssl/*.pem
+nano docker-compose.yml
 ```
 
-### 2.4 Renovação Automática SSL
-
-```bash
-# Editar crontab
-sudo crontab -e
-
-# Adicionar esta linha (escolha editor nano se perguntar):
-0 0 1 * * certbot renew --quiet && cp /etc/letsencrypt/live/savycore.com.br/*.pem /opt/whatsapp-app/nginx/ssl/ && cd /opt/whatsapp-app && docker-compose restart nginx
-```
-
-Salve e feche (Ctrl+O, Enter, Ctrl+X)
-
----
-
-## 🐳 Passo 3: Deploy no Portainer
-
-### 3.1 Buildar as Imagens
-
-Na VPS, ainda em `/opt/whatsapp-app`:
-
-```bash
-# Buildar backend e frontend
-docker-compose build
-
-# Isso vai demorar 2-5 minutos
-```
-
-### 3.2 Criar Stack no Portainer
-
-1. **Acesse Portainer**: `http://IP_DA_VPS:9000` (ou sua porta)
-2. **Login** no Portainer
-3. **Stacks** → **Add stack**
-4. **Name**: `whatsapp-ai-agent`
-5. **Build method**: Selecione **Upload**
-6. **Upload**: Clique e selecione o arquivo `docker-compose.yml` da pasta do projeto
-7. Ou copie e cole o conteúdo abaixo:
+Cole este conteúdo (adaptado para Traefik):
 
 ```yaml
 version: '3.8'
@@ -129,8 +79,6 @@ services:
   backend:
     build: ./backend
     container_name: whatsapp-backend
-    ports:
-      - "3000:3000"
     volumes:
       - ./auth_info_baileys:/app/auth_info_baileys
       - ./uploads:/app/uploads
@@ -139,7 +87,14 @@ services:
       - PORT=3000
     restart: unless-stopped
     networks:
-      - whatsapp-network
+      - traefik_public
+      - whatsapp-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whatsapp-backend.rule=Host(`savycore.com.br`) && PathPrefix(`/api`, `/socket.io`)"
+      - "traefik.http.routers.whatsapp-backend.entrypoints=websecure"
+      - "traefik.http.routers.whatsapp-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.whatsapp-backend.loadbalancer.server.port=3000"
 
   frontend:
     build: ./frontend
@@ -148,54 +103,93 @@ services:
       - backend
     restart: unless-stopped
     networks:
-      - whatsapp-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: whatsapp-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - frontend
-      - backend
-    restart: unless-stopped
-    networks:
-      - whatsapp-network
+      - traefik_public
+      - whatsapp-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whatsapp-frontend.rule=Host(`savycore.com.br`)"
+      - "traefik.http.routers.whatsapp-frontend.entrypoints=websecure"
+      - "traefik.http.routers.whatsapp-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.whatsapp-frontend.loadbalancer.server.port=80"
+      # Redirect HTTP to HTTPS
+      - "traefik.http.routers.whatsapp-frontend-http.rule=Host(`savycore.com.br`)"
+      - "traefik.http.routers.whatsapp-frontend-http.entrypoints=web"
+      - "traefik.http.routers.whatsapp-frontend-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
 
 networks:
-  whatsapp-network:
+  traefik_public:
+    external: true
+  whatsapp-internal:
     driver: bridge
 ```
 
+Salve (Ctrl+O, Enter, Ctrl+X)
+
+**Importante:** Ajuste o nome da rede do Traefik se for diferente. Para verificar:
+```bash
+docker network ls | grep traefik
+```
+
+Se a rede tiver outro nome (ex: `traefik-public`), ajuste no docker-compose.
+
+---
+
+## 🐳 Passo 3: Deploy no Portainer
+
+### 3.1 Acessar Portainer
+
+1. **Acesse**: `http://31.97.243.107:9000` (ou sua porta do Portainer)
+2. **Login** no Portainer
+3. **Selecione** seu environment (primary)
+
+### 3.2 Criar Stack
+
+1. **Menu lateral** → **Stacks**
+2. **Add stack**
+3. **Name**: `whatsapp-ai-agent`
+4. **Build method**: Selecione **Git Repository**
+
+5. **Repository URL**: `https://github.com/SEU_USUARIO/whatsapp-ai-agent`
+6. **Repository reference**: `refs/heads/main`
+7. **Compose path**: `docker-compose.yml`
+
+**OU** se preferir usar **Web editor**:
+- Selecione **Web editor**
+- Cole o conteúdo do `docker-compose.yml` (já está no projeto)
+
 8. **Environment variables** (opcional): Deixe vazio
+
 9. **Deploy the stack**
 
-### 3.3 Aguardar Deploy
+### 3.3 Aguardar Build
 
-- Portainer vai usar as imagens que você buildou
-- Aguarde 1-2 minutos
-- Verifique se todos os containers estão **running**
+- Portainer vai clonar o repo
+- Vai buildar as imagens (2-5 minutos)
+- Vai subir os containers
+
+### 3.4 Verificar Containers
+
+1. **Menu lateral** → **Containers**
+2. Você deve ver:
+   - ✅ whatsapp-backend (running)
+   - ✅ whatsapp-frontend (running)
+
+3. **Clique** em cada container para ver logs se necessário
 
 ---
 
 ## ✅ Passo 4: Verificar e Testar
 
-### 4.1 Verificar Containers
+### 4.1 Aguardar SSL (1-2 minutos)
 
-No Portainer:
-- **Containers** → Você deve ver:
-  - ✅ whatsapp-backend (running)
-  - ✅ whatsapp-frontend (running)
-  - ✅ whatsapp-nginx (running)
+O Traefik vai gerar o certificado SSL automaticamente. Aguarde 1-2 minutos.
 
 ### 4.2 Testar Acesso
 
 1. Abra: `https://savycore.com.br`
 2. Você deve ver a interface do app! 🎉
+3. O SSL deve estar funcionando (cadeado verde)
 
 ### 4.3 Verificar Backend
 
@@ -204,13 +198,8 @@ curl https://savycore.com.br/api/health
 # Deve retornar: {"status":"ok",...}
 ```
 
-### 4.4 Ver Logs (se necessário)
+### 4.4 Ver Logs
 
-No Portainer:
-- **Containers** → Clique em `whatsapp-backend`
-- **Logs** → Veja se está rodando sem erros
-
-Ou via SSH:
 ```bash
 cd /opt/whatsapp-app
 docker-compose logs -f backend
@@ -229,7 +218,7 @@ git commit -m "feat: nova funcionalidade"
 git push origin main
 
 # 2. Na VPS - atualizar
-ssh usuario@IP_DA_VPS
+ssh root@31.97.243.107
 cd /opt/whatsapp-app
 git pull origin main
 docker-compose build
@@ -239,12 +228,11 @@ docker-compose up -d --force-recreate
 docker image prune -f
 ```
 
-### Script Automático (Opcional)
+### Script Automático
 
-Criar arquivo `update.sh` na VPS:
+Criar arquivo `update.sh`:
 
 ```bash
-cd /opt/whatsapp-app
 nano update.sh
 ```
 
@@ -289,13 +277,20 @@ docker-compose up -d
 ### SSL não funciona
 
 ```bash
-# Verificar certificados
-ls -la nginx/ssl/
+# Verificar logs do Traefik
+docker logs traefik_traefik.1.vkywdjtcqjotxqy2bzw1ilvzw
 
-# Renovar
-sudo certbot renew --force-renewal
-sudo cp /etc/letsencrypt/live/savycore.com.br/*.pem nginx/ssl/
-docker-compose restart nginx
+# Aguardar 2-3 minutos para o Traefik gerar o certificado
+```
+
+### Erro "network not found"
+
+```bash
+# Listar redes
+docker network ls
+
+# Ajustar nome da rede no docker-compose.yml
+# Trocar "traefik_public" pelo nome correto
 ```
 
 ### WhatsApp não conecta
@@ -304,18 +299,6 @@ docker-compose restart nginx
 # Limpar sessão
 rm -rf auth_info_baileys/*
 docker-compose restart backend
-```
-
-### Porta 80/443 ocupada
-
-```bash
-# Ver o que está usando
-sudo lsof -i :80
-sudo lsof -i :443
-
-# Parar (ex: apache)
-sudo systemctl stop apache2
-sudo systemctl disable apache2
 ```
 
 ### Rebuild completo
@@ -357,14 +340,21 @@ docker stats
 
 Seu app está rodando em: **https://savycore.com.br**
 
+### Vantagens do Traefik:
+
+- ✅ SSL automático (Let's Encrypt)
+- ✅ Renovação automática de certificados
+- ✅ Sem necessidade de certbot
+- ✅ Mais simples e moderno
+- ✅ Dashboard do Traefik para monitorar
+
 ### Checklist Final:
 
 - ✅ Código no GitHub
 - ✅ Clonado na VPS
-- ✅ SSL configurado
 - ✅ Imagens buildadas
-- ✅ Stack criada no Portainer
 - ✅ Containers rodando
+- ✅ SSL funcionando (Traefik)
 - ✅ App acessível via HTTPS
 
 ---
@@ -373,9 +363,9 @@ Seu app está rodando em: **https://savycore.com.br**
 
 1. Verifique os logs: `docker-compose logs -f`
 2. Verifique o status: `docker-compose ps`
-3. Tente rebuild: `docker-compose build --no-cache`
-4. Reinicie: `docker-compose restart`
+3. Verifique o Traefik: `docker logs [ID_DO_TRAEFIK]`
+4. Tente rebuild: `docker-compose build --no-cache`
 
 ---
 
-**Desenvolvido com ❤️ | Simples e Direto ao Ponto**
+**Desenvolvido com ❤️ | Traefik + Docker + React + Express**
