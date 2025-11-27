@@ -207,55 +207,75 @@ docker-compose logs -f backend
 
 ---
 
-## 🔄 Passo 5: Atualizar o App
+## 🔄 Passo 5: Configurar Atualização Automática
 
-### Quando Fizer Mudanças no Código:
+### Opção 1: Webhook do Portainer (Recomendado)
+
+O Portainer pode atualizar automaticamente quando você faz push no GitHub!
+
+#### 5.1 Criar Webhook no Portainer
+
+1. **Portainer** → **Stacks** → Clique na stack `whatsapp-ai-agent`
+2. Role até **Webhooks**
+3. **Create a webhook**
+4. Copie a URL gerada (algo como: `http://31.97.243.107:9000/api/webhooks/...`)
+
+#### 5.2 Configurar GitHub Actions
+
+Crie o arquivo `.github/workflows/deploy.yml` (já existe no projeto):
+
+```yaml
+name: Deploy to Portainer
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Portainer Webhook
+        run: |
+          curl -X POST ${{ secrets.PORTAINER_WEBHOOK_URL }}
+```
+
+#### 5.3 Adicionar Secret no GitHub
+
+1. **GitHub** → Seu repositório → **Settings**
+2. **Secrets and variables** → **Actions**
+3. **New repository secret**
+   - Name: `PORTAINER_WEBHOOK_URL`
+   - Value: Cole a URL do webhook do Portainer
+4. **Add secret**
+
+#### 5.4 Testar
 
 ```bash
-# 1. No seu PC - fazer push
+# Fazer uma mudança
 git add .
-git commit -m "feat: nova funcionalidade"
+git commit -m "test: testar deploy automático"
 git push origin main
 
-# 2. Na VPS - atualizar
-ssh root@31.97.243.107
-cd /opt/whatsapp-app
-git pull origin main
-docker-compose build
-docker-compose up -d --force-recreate
-
-# 3. Limpar imagens antigas
-docker image prune -f
+# GitHub Actions vai automaticamente:
+# 1. Detectar o push
+# 2. Chamar o webhook do Portainer
+# 3. Portainer vai fazer git pull e rebuild
 ```
 
-### Script Automático
+---
 
-Criar arquivo `update.sh`:
+### Opção 2: Atualização Manual (Backup)
 
-```bash
-nano update.sh
-```
+Se precisar atualizar manualmente:
 
-Cole:
-```bash
-#!/bin/bash
-cd /opt/whatsapp-app
-git pull origin main
-docker-compose build
-docker-compose up -d --force-recreate
-docker image prune -f
-echo "✅ Atualização concluída!"
-```
+**No Portainer:**
+1. **Stacks** → `whatsapp-ai-agent`
+2. **Update the stack**
+3. **Pull latest image versions**
+4. **Update**
 
-Dar permissão:
-```bash
-chmod +x update.sh
-```
-
-Usar:
-```bash
-./update.sh
-```
+Pronto! Portainer vai fazer git pull e rebuild automaticamente.
 
 ---
 
