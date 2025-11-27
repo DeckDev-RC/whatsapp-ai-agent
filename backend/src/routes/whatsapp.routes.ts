@@ -37,6 +37,13 @@ export function whatsappRoutes(whatsappManager: WhatsAppManager) {
     // Clear authentication
     router.post('/clear-auth', async (req: Request, res: Response) => {
         try {
+            // Primeiro desconectar se estiver conectado
+            if (whatsappManager.getStatus().isConnected) {
+                await whatsappManager.disconnect();
+                // Aguardar um pouco para garantir que desconectou
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
             await whatsappManager.clearAuth();
             res.json({ success: true });
         } catch (error: any) {
