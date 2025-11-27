@@ -1,8 +1,40 @@
+# 🚨 IMPORTANTE: Portainer Swarm Mode
+
+Seu Portainer está em **Swarm Mode**, que tem limitações:
+
+## ❌ O que NÃO funciona em Swarm:
+- `build:` - Não pode buildar imagens
+- `container_name:` - Não suportado
+- `restart:` - Deve usar `deploy.restart_policy`
+
+## ✅ Solução: Buildar Manualmente
+
+Você precisa buildar as imagens **manualmente na VPS** e depois usar no Portainer.
+
+### Passo a Passo:
+
+#### 1. Na VPS via SSH:
+
+```bash
+cd /opt/whatsapp-app
+
+# Buildar backend
+docker build -t whatsapp-backend:latest ./backend
+
+# Buildar frontend  
+docker build -t whatsapp-frontend:latest ./frontend
+```
+
+#### 2. Usar Web Editor no Portainer:
+
+Cole este docker-compose:
+
+```yaml
 version: '3.8'
 
 services:
   backend:
-    image: deckdev/whatsapp-backend:latest
+    image: whatsapp-backend:latest
     volumes:
       - backend-auth:/app/auth_info_baileys
       - backend-uploads:/app/uploads
@@ -25,7 +57,7 @@ services:
       - whatsapp-internal
 
   frontend:
-    image: deckdev/whatsapp-frontend:latest
+    image: whatsapp-frontend:latest
     deploy:
       replicas: 1
       restart_policy:
@@ -37,7 +69,6 @@ services:
         - "traefik.http.routers.whatsapp-frontend.tls.certresolver=letsencrypt"
         - "traefik.http.services.whatsapp-frontend.loadbalancer.server.port=80"
         - "traefik.docker.network=SavyCoreNet"
-        # Redirect HTTP to HTTPS
         - "traefik.http.routers.whatsapp-frontend-http.rule=Host(`savycore.com.br`)"
         - "traefik.http.routers.whatsapp-frontend-http.entrypoints=web"
         - "traefik.http.routers.whatsapp-frontend-http.middlewares=redirect-to-https"
@@ -55,3 +86,8 @@ networks:
 volumes:
   backend-auth:
   backend-uploads:
+```
+
+#### 3. Deploy no Portainer
+
+Agora vai funcionar porque as imagens já existem localmente!
