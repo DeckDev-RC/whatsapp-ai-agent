@@ -1254,55 +1254,59 @@ export class AIManager {
 
         const response = await fetch(url, {
           method: 'POST',
-          if(!response.ok) {
-            const errorData: any = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || response.statusText;
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
 
-        // Se for erro de cota, lançar erro específico para acionar retry
-        if (response.status === 429 || errorMessage.includes('quota')) {
-          throw new Error(`Quota exceeded: ${errorMessage}`);
+        if (!response.ok) {
+          const errorData: any = await response.json().catch(() => ({}));
+          const errorMessage = errorData.error?.message || response.statusText;
+
+          // Se for erro de cota, lançar erro específico para acionar retry
+          if (response.status === 429 || errorMessage.includes('quota')) {
+            throw new Error(`Quota exceeded: ${errorMessage}`);
+          }
+
+          throw new Error(`Gemini Audio API error: ${errorMessage}`);
         }
 
-        throw new Error(`Gemini Audio API error: ${errorMessage}`);
-      }
-
         const data: any = await response.json();
-      const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        const audioBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
-      if (!audioBase64) {
-        throw new Error('Nenhum áudio retornado pelo modelo');
+        if (!audioBase64) {
+          throw new Error('Nenhum áudio retornado pelo modelo');
+        }
+
+        const audioBuffer = Buffer.from(audioBase64, 'base64');
+
+        // Debug: Primeiros bytes do áudio
+        const firstBytes = audioBuffer.slice(0, 16).toString('hex');
+        console.log('[AIManager] 🔍 Primeiros bytes do áudio:', firstBytes);
+        console.log('[AIManager] 🔍 Tamanho do buffer:', audioBuffer.length);
+
+        // Sucesso! Registrar uso da chave
+        if (keyId) {
+          await apiKeyManager.recordRequest(keyId, true);
+        }
+
+        return {
+          audioBuffer,
+          text: 'Resposta em áudio gerada pelo Gemini'
+        };
+
+      } catch (error: any) {
+        console.warn(`[AIManager] ⚠️ Erro na tentativa ${attempt + 1} de gerar áudio:`, error.message);
+        lastError = error;
+
+        // Registrar falha da chave
+        if (keyId) {
+          await apiKeyManager.recordRequest(keyId, false);
+        }
+
+        // Se não for erro de cota, talvez não adiante tentar outra chave, mas vamos tentar mesmo assim por segurança
+        // Se for a última tentativa, o erro será lançado fora do loop
       }
-
-      const audioBuffer = Buffer.from(audioBase64, 'base64');
-
-      // Debug: Primeiros bytes do áudio
-      const firstBytes = audioBuffer.slice(0, 16).toString('hex');
-      console.log('[AIManager] 🔍 Primeiros bytes do áudio:', firstBytes);
-      console.log('[AIManager] 🔍 Tamanho do buffer:', audioBuffer.length);
-
-      // Sucesso! Registrar uso da chave
-      if (keyId) {
-        await apiKeyManager.recordRequest(keyId, true);
-      }
-
-      return {
-        audioBuffer,
-        text: 'Resposta em áudio gerada pelo Gemini'
-      };
-
-    } catch (error: any) {
-      console.warn(`[AIManager] ⚠️ Erro na tentativa ${attempt + 1} de gerar áudio:`, error.message);
-      lastError = error;
-
-      // Registrar falha da chave
-      if (keyId) {
-        await apiKeyManager.recordRequest(keyId, false);
-      }
-
-      // Se não for erro de cota, talvez não adiante tentar outra chave, mas vamos tentar mesmo assim por segurança
-      // Se for a última tentativa, o erro será lançado fora do loop
     }
-  }
 
     console.error('[AIManager] ❌ Todas as tentativas de gerar áudio falharam.');
     throw lastError || new Error('Falha na geração de áudio após múltiplas tentativas.');
@@ -1311,93 +1315,93 @@ export class AIManager {
   /**
    * Transcreve áudio usando Gemini (Speech-to-Text) com Fallback Inteligente
    */
-  async transcribeAudio(audioBuffer: Buffer, mimeType: string = 'audio/ogg'): Promise < string > {
-  // Lista de modelos para tentar (em ordem de preferência)
-  const modelsToTry = [
-    'gemini-2.0-flash',      // Melhor qualidade (Multimodal)
-    'gemini-2.0-flash-lite', // Mais econômico e rápido (Multimodal)
-    'gemini-1.5-flash',      // Fallback estável (Multimodal)
-    'gemini-1.5-pro'         // Último recurso (Mais lento)
-  ];
+  async transcribeAudio(audioBuffer: Buffer, mimeType: string = 'audio/ogg'): Promise<string> {
+    // Lista de modelos para tentar (em ordem de preferência)
+    const modelsToTry = [
+      'gemini-2.0-flash',      // Melhor qualidade (Multimodal)
+      'gemini-2.0-flash-lite', // Mais econômico e rápido (Multimodal)
+      'gemini-1.5-flash',      // Fallback estável (Multimodal)
+      'gemini-1.5-pro'         // Último recurso (Mais lento)
+    ];
 
-  let lastError: any;
+    let lastError: any;
 
-  for(const model of modelsToTry) {
-    try {
-      console.log(`[AIManager] 🎤 Tentando transcrever com modelo: ${model}...`);
+    for (const model of modelsToTry) {
+      try {
+        console.log(`[AIManager] 🎤 Tentando transcrever com modelo: ${model}...`);
 
-      // Obter chave API (com rotação se possível)
-      let apiKey = '';
-      const nextKey = await apiKeyManager.getNextKey('gemini');
-      if (nextKey) {
-        apiKey = nextKey.key;
-      } else {
-        apiKey = configStore.getSecureKey('gemini') || '';
-      }
-
-      if (!apiKey) {
-        throw new Error('Nenhuma chave API disponível para Gemini');
-      }
-
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-      // Converter áudio para base64
-      const audioBase64 = audioBuffer.toString('base64');
-
-      const body = {
-        contents: [{
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: audioBase64
-              }
-            },
-            {
-              text: 'Transcreva este áudio em português. Retorne apenas o texto transcrito, sem comentários adicionais.'
-            }
-          ]
-        }]
-      };
-
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        const errorData: any = await response.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || response.statusText;
-
-        // Se for erro de cota ou modelo não encontrado, lança erro para tentar o próximo
-        if (response.status === 429 || response.status === 404 || errorMessage.includes('quota') || errorMessage.includes('not found')) {
-          console.warn(`[AIManager] ⚠️ Falha com modelo ${model}: ${errorMessage}`);
-          throw new Error(errorMessage);
+        // Obter chave API (com rotação se possível)
+        let apiKey = '';
+        const nextKey = await apiKeyManager.getNextKey('gemini');
+        if (nextKey) {
+          apiKey = nextKey.key;
+        } else {
+          apiKey = configStore.getSecureKey('gemini') || '';
         }
 
-        throw new Error(`Gemini API error: ${errorMessage}`);
+        if (!apiKey) {
+          throw new Error('Nenhuma chave API disponível para Gemini');
+        }
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+        // Converter áudio para base64
+        const audioBase64 = audioBuffer.toString('base64');
+
+        const body = {
+          contents: [{
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: audioBase64
+                }
+              },
+              {
+                text: 'Transcreva este áudio em português. Retorne apenas o texto transcrito, sem comentários adicionais.'
+              }
+            ]
+          }]
+        };
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+          const errorData: any = await response.json().catch(() => ({}));
+          const errorMessage = errorData.error?.message || response.statusText;
+
+          // Se for erro de cota ou modelo não encontrado, lança erro para tentar o próximo
+          if (response.status === 429 || response.status === 404 || errorMessage.includes('quota') || errorMessage.includes('not found')) {
+            console.warn(`[AIManager] ⚠️ Falha com modelo ${model}: ${errorMessage}`);
+            throw new Error(errorMessage);
+          }
+
+          throw new Error(`Gemini API error: ${errorMessage}`);
+        }
+
+        const data: any = await response.json();
+        const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        if (!transcription) {
+          throw new Error('Nenhuma transcrição retornada pelo modelo');
+        }
+
+        console.log(`[AIManager] ✅ Transcrição com ${model}: "${transcription}"`);
+        return transcription.trim();
+
+      } catch (error) {
+        console.warn(`[AIManager] ⚠️ Erro ao tentar modelo ${model}:`, error);
+        lastError = error;
+        // Continua para o próximo modelo no loop
       }
-
-      const data: any = await response.json();
-      const transcription = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-      if (!transcription) {
-        throw new Error('Nenhuma transcrição retornada pelo modelo');
-      }
-
-      console.log(`[AIManager] ✅ Transcrição com ${model}: "${transcription}"`);
-      return transcription.trim();
-
-    } catch (error) {
-      console.warn(`[AIManager] ⚠️ Erro ao tentar modelo ${model}:`, error);
-      lastError = error;
-      // Continua para o próximo modelo no loop
     }
-  }
 
     // Se chegou aqui, todos os modelos falharam
     console.error('[AIManager] ❌ Todos os modelos de transcrição falharam.');
-  throw lastError || new Error('Falha na transcrição de áudio com todos os modelos disponíveis.');
-}
+    throw lastError || new Error('Falha na transcrição de áudio com todos os modelos disponíveis.');
+  }
 }
