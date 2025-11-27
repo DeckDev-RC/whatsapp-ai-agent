@@ -6,15 +6,10 @@ import type { Agent, AIConfig, AIProvider, Tenant, WhatsAppNumber, Conversation,
 // ============================================
 
 interface AppState {
-  // WhatsApp
   whatsapp: WhatsAppConnection | null;
   whatsappLoading: boolean;
   whatsappContacts: any[];
   contactsLoading: boolean;
-
-  // Supabase
-  whatsapp: WhatsAppConnection | null;
-  supabaseLoading: boolean;
 
   // AI
   aiConfigs: Record<AIProvider, AIConfig> | null;
@@ -51,12 +46,10 @@ interface AppState {
   loadWhatsAppStatus: () => Promise<void>;
   loadWhatsAppContacts: () => Promise<void>;
   syncWhatsAppContacts: () => Promise<{ synced: number; errors: number }>;
-  loadSupabaseConfig: () => Promise<void>;
   loadAIConfigs: () => Promise<void>;
   loadAPIKeys: () => Promise<void>;
   loadAgents: () => Promise<void>;
   loadAgentAssignments: () => Promise<void>;
-  loadStats: () => Promise<void>;
   loadAll: () => Promise<void>;
 }
 
@@ -70,8 +63,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   whatsappLoading: false,
   whatsappContacts: [],
   contactsLoading: false,
-  supabase: null,
-  supabaseLoading: false,
   aiConfigs: null,
   activeAIProvider: null,
   aiLoading: false,
@@ -83,7 +74,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   agentsLoading: false,
   agentAssignments: [],
   assignmentsLoading: false,
-  stats: null,
   statsLoading: false,
 
   // Actions
@@ -95,9 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ whatsappContacts: contacts });
   },
 
-  updateSupabase: (config) => {
-    set({ supabase: config });
-  },
+
 
   updateAIConfigs: (configs) => {
     // Encontrar provider ativo
@@ -131,9 +119,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ agentAssignments: assignments });
   },
 
-  updateStats: (stats) => {
-    set({ stats });
-  },
+
 
   // Loaders
   loadWhatsAppStatus: async () => {
@@ -155,24 +141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  loadSupabaseConfig: async () => {
-    const currentState = get();
-    if (currentState.supabaseLoading) {
-      return;
-    }
 
-    set({ supabaseLoading: true });
-    try {
-      const response = await window.api.supabase.getConfig();
-      if (response.success && response.data) {
-        set({ supabase: response.data });
-      }
-    } catch (error) {
-      console.error('[AppStore] Erro ao carregar config Supabase:', error);
-    } finally {
-      set({ supabaseLoading: false });
-    }
-  },
 
   loadAIConfigs: async () => {
     // Evita múltiplas chamadas simultâneas
@@ -209,24 +178,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  loadStats: async () => {
-    const currentState = get();
-    if (currentState.statsLoading) {
-      return;
-    }
 
-    set({ statsLoading: true });
-    try {
-      const response = await window.api.stats.get();
-      if (response.success && response.data) {
-        set({ stats: response.data });
-      }
-    } catch (error) {
-      console.error('[AppStore] Erro ao carregar estatísticas:', error);
-    } finally {
-      set({ statsLoading: false });
-    }
-  },
 
   loadAPIKeys: async () => {
     const currentState = get();
@@ -348,7 +300,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Evita múltiplas chamadas simultâneas de loadAll
     const currentState = get();
     if (currentState.whatsappLoading || currentState.aiLoading ||
-      currentState.supabaseLoading || currentState.statsLoading ||
       currentState.apiKeysLoading || currentState.agentsLoading ||
       currentState.assignmentsLoading || currentState.contactsLoading) {
       return; // Já há um carregamento em andamento
@@ -357,12 +308,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await Promise.all([
       get().loadWhatsAppStatus(),
       get().loadWhatsAppContacts(),
-      get().loadSupabaseConfig(),
       get().loadAIConfigs(),
       get().loadAPIKeys(),
       get().loadAgents(),
       get().loadAgentAssignments(),
-      get().loadStats(),
     ]);
   },
 }));
