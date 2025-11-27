@@ -6,14 +6,22 @@ import {
   AlertTriangle,
   Clock,
   CheckCircle,
-  interface EndpointStats {
-    totalRequests: number;
-    successRate: number;
-    averageLatency: number;
-    errorRate: number;
-    totalTokens: number;
-    totalCost: number;
-  }
+  Database,
+  BarChart3,
+  RefreshCw,
+  Server,
+  HardDrive
+} from 'lucide-react';
+import type { AIProvider } from '../shared/types';
+
+interface EndpointStats {
+  totalRequests: number;
+  successRate: number;
+  averageLatency: number;
+  errorRate: number;
+  totalTokens: number;
+  totalCost: number;
+}
 
 interface ProviderStats {
   totalRequests: number;
