@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { configStore } from '../store/ConfigStore';
+import { configStore } from '../../config/ConfigStore';
 import { apiKeyManager } from '../services/APIKeyManager';
 import { cacheManager } from '../services/CacheManager';
 import { retryManager } from '../services/RetryManager';

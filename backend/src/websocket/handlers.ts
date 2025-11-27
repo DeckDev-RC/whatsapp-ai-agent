@@ -1,7 +1,7 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
-import type { WhatsAppManager } from '../managers/WhatsAppManager';
-import type { DatabaseManager } from '../managers/DatabaseManager';
-import type { AIManager } from '../managers/AIManager';
+import type { WhatsAppManager } from '../managers/whatsapp/WhatsAppManager';
+import type { DatabaseManager } from '../managers/database/DatabaseManager';
+import type { AIManager } from '../managers/ai/AIManager';
 import { processIncomingMessage } from './messageProcessor';
 
 interface Managers {

@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import type { DatabaseManager } from '../managers/DatabaseManager';
+import type { DatabaseManager } from '../managers/database/DatabaseManager';
 
 export function databaseRoutes(databaseManager: DatabaseManager) {
     const router = Router();

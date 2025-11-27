@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { configStore } from '../store/ConfigStore';
+import { configStore } from '../../config/ConfigStore';
 import type { SupabaseConfig, Tenant, WhatsAppNumber, Conversation, Order } from '../../shared/types';
 
 // ============================================

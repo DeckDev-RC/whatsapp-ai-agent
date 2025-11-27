@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { configStore } from '../store/ConfigStore';
+import { databaseManager } from '../database/DatabaseManager';
+import { configStore } from '../../config/ConfigStore';
 import type { Agent, AgentAssignment, AIProvider } from '../../shared/types';
 
 // ============================================
@@ -207,7 +208,7 @@ export class AgentManager {
   async removeAssignmentByContact(contactPhone: string): Promise<void> {
     const beforeCount = this.assignments.length;
     this.assignments = this.assignments.filter((a) => a.contactPhone !== contactPhone);
-    
+
     if (this.assignments.length < beforeCount) {
       await this.saveAssignments();
       console.log(`[AgentManager] Atribuição removida do contato: ${contactPhone}`);
@@ -244,7 +245,7 @@ export class AgentManager {
     agentsByProvider: Record<string, number>;
   }> {
     const agentsByProvider: Record<string, number> = {};
-    
+
     for (const agent of this.agents) {
       agentsByProvider[agent.provider] = (agentsByProvider[agent.provider] || 0) + 1;
     }

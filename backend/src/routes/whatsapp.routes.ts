@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import type { WhatsAppManager } from '../managers/WhatsAppManager';
+import type { WhatsAppManager } from '../managers/whatsapp/WhatsAppManager';
 
 export function whatsappRoutes(whatsappManager: WhatsAppManager) {
     const router = Router();

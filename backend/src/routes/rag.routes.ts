@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { ragManager } from '../managers/services/RAGManager';
 import { embeddingManager } from '../managers/services/EmbeddingManager';
-import { databaseManager } from '../managers/DatabaseManager';
+import { databaseManager } from '../managers/database/DatabaseManager';
 
 export function ragRoutes() {
     const router = Router();

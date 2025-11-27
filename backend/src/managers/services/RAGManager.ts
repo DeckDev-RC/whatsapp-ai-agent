@@ -6,7 +6,7 @@ import OpenAI from 'openai';
 import { cacheManager } from './CacheManager';
 import type { Order, AIProvider, AIConfig } from '../../shared/types';
 import type { DatabaseManager } from '../database/DatabaseManager';
-import { configStore } from '../store/ConfigStore';
+import { configStore } from '../../config/ConfigStore';
 
 interface OrderEmbedding {
   order: Order;

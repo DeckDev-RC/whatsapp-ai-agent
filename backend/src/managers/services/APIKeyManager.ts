@@ -1,4 +1,4 @@
-import { configStore } from '../store/ConfigStore';
+import { configStore } from '../../config/ConfigStore';
 import type { AIProvider, APIKey } from '../../shared/types';
 
 // ============================================
@@ -146,11 +146,11 @@ class APIKeyManager {
 
     const providerToUse = provider || key.provider;
     const limits = this.getRateLimits(providerToUse, model);
-    
+
     const history = this.requestHistory.get(keyId) || [];
     const now = Date.now();
     const recentRequests = history.filter(time => now - time < 60000); // Últimos 60s
-    
+
     // Verificar RPM (requests per minute)
     return recentRequests.length < limits.rpm;
   }
@@ -161,16 +161,16 @@ class APIKeyManager {
 
     const providerToUse = provider || key.provider;
     const limits = this.getRateLimits(providerToUse, model);
-    
+
     const history = this.requestHistory.get(keyId) || [];
     if (history.length === 0) return 0;
 
     const now = Date.now();
     const recentRequests = history.filter(time => now - time < 60000);
-    
+
     if (recentRequests.length >= limits.rpm) {
       const oldestRequest = Math.min(...recentRequests);
-    const timeSinceOldest = now - oldestRequest;
+      const timeSinceOldest = now - oldestRequest;
       return Math.max(0, 60000 - timeSinceOldest);
     }
 
@@ -184,7 +184,7 @@ class APIKeyManager {
     // Atualizar estatísticas
     key.requestCount++;
     key.lastUsed = new Date();
-    
+
     if (success) {
       key.consecutiveErrors = 0;
       key.healthScore = Math.min(100, key.healthScore + 1);
