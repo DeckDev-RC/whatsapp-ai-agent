@@ -205,8 +205,16 @@ export const api = {
     save: (prompt: string) => apiClient.post('/ai/system-prompt', { prompt })
 };
 
-// WhatsApp syncContacts
+// WhatsApp syncContacts and generateQR
 (api.whatsapp as any).syncContacts = () => apiClient.post('/whatsapp/sync-contacts');
+(api.whatsapp as any).generateQR = () => apiClient.post('/whatsapp/connect');
 
 // Metrics getRecentAlerts alias
 (api.metrics as any).getRecentAlerts = (limit?: number) => api.metrics.getAlerts(limit);
+
+// RAG alias
+(api as any).rag = {
+    getStats: () => apiClient.get('/rag/stats'),
+    testSearch: (query: string, tenantId: string, limit?: number) => apiClient.post('/rag/test-search', { query, tenantId, topK: limit }),
+    clearCache: (tenantId: string) => apiClient.post(`/rag/clear-cache/${tenantId}`)
+};

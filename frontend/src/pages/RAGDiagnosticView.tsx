@@ -35,7 +35,7 @@ export function RAGDiagnosticView() {
     const loadStats = async () => {
         setLoading(true);
         try {
-            const response = await window.api.invoke('rag:get-stats');
+            const response = await window.api.rag.getStats();
             if (response.success && response.data) {
                 setStats(response.data);
             }
@@ -64,7 +64,7 @@ export function RAGDiagnosticView() {
 
         setSearching(true);
         try {
-            const response = await window.api.invoke('rag:test-search', searchQuery, searchTenantId, 5);
+            const response = await window.api.rag.testSearch(searchQuery, searchTenantId, 5);
             if (response.success && response.data) {
                 setSearchResults(response.data);
             }
@@ -81,7 +81,7 @@ export function RAGDiagnosticView() {
         }
 
         try {
-            const response = await window.api.invoke('rag:clear-cache', tenantId);
+            const response = await window.api.rag.clearCache(tenantId);
             if (response.success) {
                 alert('Cache limpo com sucesso!');
                 loadStats();
