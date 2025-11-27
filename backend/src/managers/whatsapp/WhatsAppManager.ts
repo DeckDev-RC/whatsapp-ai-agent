@@ -764,3 +764,5 @@ export class WhatsAppManager {
     return contacts;
   }
 }
+
+export const whatsappManager = new WhatsAppManager();
