@@ -3,9 +3,9 @@ import { observabilityManager } from '../managers/services/ObservabilityManager'
 import { queueManager } from '../managers/services/QueueManager';
 import { cacheManager } from '../managers/services/CacheManager';
 import { apiKeyManager } from '../managers/services/APIKeyManager';
-import { whatsappManager } from '../managers/services/WhatsAppManager';
+import { whatsappManager } from '../managers/whatsapp/WhatsAppManager';
 import { databaseManager } from '../managers/database/DatabaseManager';
-import { aiManager } from '../managers/services/AIManager';
+import { aiManager } from '../managers/ai/AIManager';
 import type { AIProvider } from '../types';
 
 export function metricsRoutes() {
