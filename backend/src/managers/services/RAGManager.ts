@@ -66,11 +66,11 @@ export class RAGManager {
           );
 
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
+            const errorData: any = await response.json().catch(() => ({}));
             throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
           }
 
-          const data = await response.json();
+          const data: any = await response.json();
           embedding = data.embedding.values;
 
           console.log(`[RAGManager] ✅ Embedding gerado com Gemini (${embedding.length} dimensões)`);
@@ -96,7 +96,7 @@ export class RAGManager {
             );
 
             if (response.ok) {
-              const data = await response.json();
+              const data: any = await response.json();
               embedding = data.embedding.values;
               console.log(`[RAGManager] ✅ Embedding gerado com Gemini (gecko@003, ${embedding.length} dimensões)`);
             } else {
