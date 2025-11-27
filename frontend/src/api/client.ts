@@ -184,3 +184,29 @@ export const api = {
 (api as any).stats = {
     get: () => apiClient.get('/metrics/global')
 };
+
+// API Key alias
+(api as any).apiKey = {
+    getAll: () => apiClient.get('/metrics/api-keys/all'),
+    getStats: () => apiClient.get('/metrics/api-keys'),
+    add: (provider: string, key: string, label?: string) => api.metrics.addAPIKey(provider, key, label),
+    remove: (id: string) => api.metrics.removeAPIKey(id),
+    toggle: (id: string) => api.metrics.toggleAPIKey(id)
+};
+
+// Logs alias
+(api as any).logs = {
+    getAll: () => apiClient.get('/metrics/logs')
+};
+
+// System Prompt alias
+(api as any).systemPrompt = {
+    get: () => apiClient.get('/ai/system-prompt'),
+    save: (prompt: string) => apiClient.post('/ai/system-prompt', { prompt })
+};
+
+// WhatsApp syncContacts
+(api.whatsapp as any).syncContacts = () => apiClient.post('/whatsapp/sync-contacts');
+
+// Metrics getRecentAlerts alias
+(api.metrics as any).getRecentAlerts = (limit?: number) => api.metrics.getAlerts(limit);

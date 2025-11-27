@@ -65,5 +65,23 @@ export function whatsappRoutes(whatsappManager: WhatsAppManager) {
         }
     });
 
+    // Sync contacts
+    router.post('/sync-contacts', async (req: Request, res: Response) => {
+        try {
+            // Mock implementation for now as sync logic is complex
+            // In real implementation, this would trigger a sync with database
+            const contacts = await whatsappManager.getContacts();
+            res.json({
+                success: true,
+                data: {
+                    contacts,
+                    syncResult: { synced: contacts.length, errors: 0 }
+                }
+            });
+        } catch (error: any) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     return router;
 }

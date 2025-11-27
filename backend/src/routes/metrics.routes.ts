@@ -163,5 +163,18 @@ export function metricsRoutes() {
         }
     });
 
+    // Get logs
+    router.get('/logs', async (req: Request, res: Response) => {
+        try {
+            // Mock implementation - replace with actual logger integration
+            const logs = [
+                { timestamp: Date.now(), level: 'info', message: 'System started' }
+            ];
+            res.json({ success: true, data: logs });
+        } catch (error: any) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     return router;
 }

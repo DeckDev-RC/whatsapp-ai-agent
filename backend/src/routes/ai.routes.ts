@@ -60,5 +60,26 @@ export function aiRoutes(aiManager: AIManager) {
         }
     });
 
+    // System Prompt
+    router.get('/system-prompt', async (req: Request, res: Response) => {
+        try {
+            // Mock implementation - replace with actual storage logic
+            const prompt = "Você é um assistente útil do WhatsApp.";
+            res.json({ success: true, data: prompt });
+        } catch (error: any) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
+    router.post('/system-prompt', async (req: Request, res: Response) => {
+        try {
+            const { prompt } = req.body;
+            // Mock implementation - replace with actual storage logic
+            res.json({ success: true });
+        } catch (error: any) {
+            res.status(500).json({ success: false, error: error.message });
+        }
+    });
+
     return router;
 }
