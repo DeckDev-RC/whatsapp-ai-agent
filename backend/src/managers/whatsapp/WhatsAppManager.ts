@@ -327,7 +327,7 @@ export class WhatsAppManager {
       try {
         // Cleanup old socket
         if (this.sock) {
-          this.sock.ev.removeAllListeners();
+          this.sock.end(undefined);
           this.sock = null;
         }
         this.isConnecting = false;
@@ -539,7 +539,7 @@ export class WhatsAppManager {
         } catch (e) {
           // Ignore logout errors
         }
-        this.sock.ev.removeAllListeners();
+        this.sock.end(undefined);
         this.sock = null;
       }
 
@@ -566,7 +566,7 @@ export class WhatsAppManager {
       // Disconnect socket
       if (this.sock) {
         try {
-          this.sock.ev.removeAllListeners();
+          this.sock.end(undefined);
           await this.sock.logout().catch(() => { });
         } catch (e) {
           // Ignore
