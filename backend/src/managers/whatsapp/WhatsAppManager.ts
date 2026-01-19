@@ -11,6 +11,7 @@ import makeWASocket, {
   WAMessageKey,
   WAMessageContent,
   proto,
+  delay,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -20,14 +21,17 @@ import path from 'path';
 import type { WhatsAppConnection, MessageContext, GroupInfo, ChatInfo, TypingIndicator } from '../../shared/types';
 
 // ============================================
-// WHATSAPP MANAGER - Baileys Integration (v3)
-// Following official Baileys example pattern
+// WHATSAPP MANAGER - Baileys Integration (v4)
+// Robust connection with retry limits
 // ============================================
 
 const AUTH_FOLDER = path.join(process.cwd(), 'auth_info_baileys');
-
-// Logger configuration
 const baileysLogger = pino({ level: 'silent' });
+
+// Connection configuration
+const MAX_RETRIES = 10;
+const RETRY_DELAY_BASE = 5000; // 5 seconds base
+const MAX_RETRY_DELAY = 60000; // 60 seconds max
 
 enum ConnectionStatus {
   DISCONNECTED = 'disconnected',
@@ -45,6 +49,9 @@ export class WhatsAppManager {
   private connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED;
   private statusMessage: string = 'Desconectado';
   private isConnecting = false;
+  private retryCount = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private shouldReconnect = true;
 
   // Callbacks
   private messageCallback: ((context: MessageContext) => void) | null = null;
@@ -56,8 +63,7 @@ export class WhatsAppManager {
   private privateChats: Map<string, ChatInfo> = new Map();
 
   constructor() {
-    this.log('WhatsApp Manager (Baileys v3) initialized');
-    // Ensure auth folder exists
+    this.log('WhatsApp Manager (v4 - stable) initialized');
     if (!fs.existsSync(AUTH_FOLDER)) {
       fs.mkdirSync(AUTH_FOLDER, { recursive: true });
     }
@@ -66,35 +72,30 @@ export class WhatsAppManager {
   private log(message: string, data?: any) {
     const timestamp = new Date().toISOString();
     if (data !== undefined) {
-      console.log(`[${timestamp}] WhatsApp: ${message}`, typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+      console.log(`[${timestamp}] WA: ${message}`, typeof data === 'object' ? JSON.stringify(data) : data);
     } else {
-      console.log(`[${timestamp}] WhatsApp: ${message}`);
+      console.log(`[${timestamp}] WA: ${message}`);
     }
   }
 
   private setStatus(status: ConnectionStatus, message: string) {
     this.connectionStatus = status;
     this.statusMessage = message;
-    this.log(`Status: ${status} - ${message}`);
     this.notifyStatusUpdate();
   }
 
   private notifyStatusUpdate() {
     if (this.statusUpdateCallback) {
-      const status: WhatsAppConnection = {
+      this.statusUpdateCallback({
         isConnected: this.isConnected,
         qrCode: this.qrCode || undefined,
         phoneNumber: this.phoneNumber || undefined,
         status: this.connectionStatus as 'disconnected' | 'connecting' | 'connected' | 'qr',
         statusMessage: this.statusMessage,
-      };
-      this.statusUpdateCallback(status);
+      });
     }
   }
 
-  /**
-   * Check if saved credentials exist
-   */
   async hasSavedCredentials(): Promise<boolean> {
     try {
       const credsFile = path.join(AUTH_FOLDER, 'creds.json');
@@ -104,29 +105,63 @@ export class WhatsAppManager {
     }
   }
 
-  /**
-   * Auto-connect if credentials exist
-   */
   async autoConnect(): Promise<void> {
-    try {
-      const hasCreds = await this.hasSavedCredentials();
-      if (hasCreds && !this.isConnected && !this.isConnecting) {
-        this.log('🔄 Credentials found, auto-connecting...');
-        await this.connect();
-      } else if (!hasCreds) {
-        this.log('ℹ️ No saved credentials. Manual connection required.');
-      }
-    } catch (error) {
-      this.log('Auto-connect error:', error);
+    const hasCreds = await this.hasSavedCredentials();
+    if (hasCreds && !this.isConnected && !this.isConnecting) {
+      this.log('🔄 Auto-connecting with saved credentials...');
+      await this.connect();
     }
   }
 
   /**
-   * Main connection method - following official example
+   * Stop any pending reconnection
+   */
+  private stopReconnect() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  /**
+   * Schedule a reconnection with exponential backoff
+   */
+  private scheduleReconnect() {
+    if (!this.shouldReconnect) {
+      this.log('Reconnection disabled');
+      return;
+    }
+
+    if (this.retryCount >= MAX_RETRIES) {
+      this.log(`❌ Max retries (${MAX_RETRIES}) reached. Stopping reconnection.`);
+      this.setStatus(ConnectionStatus.ERROR, `Falha após ${MAX_RETRIES} tentativas. Clique para reconectar.`);
+      this.retryCount = 0;
+      return;
+    }
+
+    this.retryCount++;
+
+    // Exponential backoff with jitter
+    const delayMs = Math.min(
+      RETRY_DELAY_BASE * Math.pow(1.5, this.retryCount - 1) + Math.random() * 2000,
+      MAX_RETRY_DELAY
+    );
+
+    this.log(`🔄 Retry ${this.retryCount}/${MAX_RETRIES} in ${Math.round(delayMs / 1000)}s`);
+    this.setStatus(ConnectionStatus.CONNECTING, `Tentativa ${this.retryCount}/${MAX_RETRIES} em ${Math.round(delayMs / 1000)}s...`);
+
+    this.stopReconnect();
+    this.reconnectTimer = setTimeout(async () => {
+      this.isConnecting = false;
+      await this.connect();
+    }, delayMs);
+  }
+
+  /**
+   * Main connection method
    */
   async connect(): Promise<void> {
     if (this.isConnecting) {
-      this.log('⚠️ Connection already in progress');
       return;
     }
 
@@ -135,20 +170,26 @@ export class WhatsAppManager {
       return;
     }
 
+    this.stopReconnect();
     this.isConnecting = true;
-    this.setStatus(ConnectionStatus.CONNECTING, 'Iniciando conexão...');
+    this.shouldReconnect = true;
+    this.setStatus(ConnectionStatus.CONNECTING, 'Conectando...');
 
     try {
-      this.log('🚀 Starting Baileys connection...');
+      // Cleanup old socket
+      if (this.sock) {
+        try { this.sock.end(undefined); } catch { }
+        this.sock = null;
+      }
 
-      // Setup auth state
+      // Small delay before connecting
+      await delay(1000);
+
       const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+      const { version } = await fetchLatestBaileysVersion();
 
-      // Fetch latest version
-      const { version, isLatest } = await fetchLatestBaileysVersion();
-      this.log(`Using Baileys version: ${version.join('.')}, isLatest: ${isLatest}`);
+      this.log(`📡 Connecting with Baileys v${version.join('.')}`);
 
-      // Create socket - following official example pattern
       this.sock = makeWASocket({
         version,
         logger: baileysLogger,
@@ -157,129 +198,123 @@ export class WhatsAppManager {
           keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
         browser: Browsers.ubuntu('Chrome'),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
+        retryRequestDelayMs: 2000,
+        qrTimeout: 40000,
         generateHighQualityLinkPreview: false,
-        // Implement getMessage for retry handling
-        getMessage: this.getMessage.bind(this),
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        getMessage: async () => proto.Message.fromObject({}),
       });
 
-      // Use sock.ev.process() pattern like official example
-      this.sock.ev.process(async (events) => {
-        // Connection update
-        if (events['connection.update']) {
-          const update = events['connection.update'];
-          const { connection, lastDisconnect, qr } = update;
+      // Connection event handler
+      this.sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-          this.log('📡 Connection event:', { connection, hasQR: !!qr });
-
-          // QR Code received
-          if (qr) {
-            try {
-              this.qrCode = await qrcode.toDataURL(qr, {
-                width: 256,
-                margin: 2,
-              });
-              this.setStatus(ConnectionStatus.QR_CODE_READY, 'QR Code pronto - Escaneie com WhatsApp');
-              this.log('📱 QR Code generated');
-            } catch (error) {
-              this.log('Error generating QR:', error);
-            }
-          }
-
-          // Connection closed
-          if (connection === 'close') {
-            this.isConnecting = false;
-            const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-            const errorMessage = (lastDisconnect?.error as Error)?.message || 'Unknown';
-
-            this.log(`❌ Connection closed - Code: ${statusCode}, Message: ${errorMessage}`);
-
-            // Reconnect if not logged out - following official example
-            if (statusCode !== DisconnectReason.loggedOut) {
-              this.log('� Reconnecting...');
-              // Reset state
-              this.sock = null;
-              this.isConnected = false;
-              this.qrCode = null;
-              // Wait a bit before reconnecting
-              setTimeout(() => {
-                this.isConnecting = false;
-                this.connect();
-              }, 3000);
-            } else {
-              this.log('🚪 Logged out - clearing credentials');
-              this.handleDisconnected();
-            }
-          }
-
-          // Connection opened
-          if (connection === 'open') {
-            this.log('✅ Connection OPEN!');
-            this.isConnected = true;
-            this.isConnecting = false;
-            this.qrCode = null;
-
-            if (this.sock?.user) {
-              this.phoneNumber = this.sock.user.id.split(':')[0].replace('@s.whatsapp.net', '');
-              this.log(`📱 Connected as: ${this.phoneNumber}`);
-            }
-
-            this.setStatus(ConnectionStatus.CONNECTED, 'Conectado com sucesso');
-
-            // Load groups
-            try {
-              await this.loadGroupsAndChats();
-            } catch (e) {
-              this.log('Error loading groups:', e);
-            }
-          }
-        }
-
-        // Credentials update
-        if (events['creds.update']) {
-          await saveCreds();
-        }
-
-        // Messages received
-        if (events['messages.upsert']) {
-          const upsert = events['messages.upsert'];
-          if (upsert.type === 'notify') {
-            for (const msg of upsert.messages) {
-              try {
-                await this.processMessage(msg);
-              } catch (error) {
-                this.log('Error processing message:', error);
-              }
-            }
-          }
-        }
-
-        // Presence update (typing)
-        if (events['presence.update']) {
-          const presence = events['presence.update'];
+        // QR Code
+        if (qr) {
+          this.retryCount = 0; // Reset retries when QR appears
           try {
-            this.handlePresenceUpdate(presence);
-          } catch (error) {
-            this.log('Error handling presence:', error);
+            this.qrCode = await qrcode.toDataURL(qr, { width: 256, margin: 2 });
+            this.setStatus(ConnectionStatus.QR_CODE_READY, 'Escaneie o QR Code');
+            this.log('📱 QR Code ready');
+          } catch (e) {
+            this.log('QR generation error:', e);
+          }
+        }
+
+        // Connection opened
+        if (connection === 'open') {
+          this.log('✅ CONNECTED!');
+          this.isConnected = true;
+          this.isConnecting = false;
+          this.qrCode = null;
+          this.retryCount = 0;
+
+          if (this.sock?.user) {
+            this.phoneNumber = this.sock.user.id.split(':')[0].replace('@s.whatsapp.net', '');
+            this.log(`📱 Phone: ${this.phoneNumber}`);
+          }
+
+          this.setStatus(ConnectionStatus.CONNECTED, 'Conectado');
+
+          try {
+            await this.loadGroupsAndChats();
+          } catch (e) {
+            this.log('Groups load error:', e);
+          }
+        }
+
+        // Connection closed
+        if (connection === 'close') {
+          this.isConnecting = false;
+          this.isConnected = false;
+
+          const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          const reason = DisconnectReason;
+
+          this.log(`❌ Disconnected: ${statusCode}`);
+
+          // Handle specific disconnect reasons
+          switch (statusCode) {
+            case reason.loggedOut:
+              this.log('🚪 Logged out');
+              this.shouldReconnect = false;
+              await this.clearAuth();
+              this.handleDisconnected();
+              break;
+
+            case reason.restartRequired:
+              this.log('🔄 Restart required');
+              this.retryCount = 0;
+              this.scheduleReconnect();
+              break;
+
+            case reason.badSession:
+              this.log('⚠️ Bad session, clearing...');
+              await this.clearAuth();
+              this.retryCount = 0;
+              this.scheduleReconnect();
+              break;
+
+            default:
+              // For all other errors (408, 515, etc), schedule reconnect
+              this.scheduleReconnect();
+              break;
           }
         }
       });
 
-      this.log('✅ Socket created with event processor');
+      // Credentials update
+      this.sock.ev.on('creds.update', saveCreds);
+
+      // Messages
+      this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type === 'notify') {
+          for (const msg of messages) {
+            try {
+              await this.processMessage(msg);
+            } catch (e) {
+              this.log('Message error:', e);
+            }
+          }
+        }
+      });
+
+      // Presence
+      this.sock.ev.on('presence.update', (presence) => {
+        this.handlePresenceUpdate(presence);
+      });
+
+      this.log('✅ Socket initialized');
 
     } catch (error: any) {
       this.log('❌ Connection error:', error.message);
-      this.setStatus(ConnectionStatus.ERROR, `Erro: ${error.message}`);
       this.isConnecting = false;
-      throw error;
+      this.scheduleReconnect();
     }
-  }
-
-  /**
-   * getMessage implementation for retry handling
-   */
-  private async getMessage(key: WAMessageKey): Promise<WAMessageContent | undefined> {
-    // Return empty message for retry - official pattern
-    return proto.Message.fromObject({});
   }
 
   private handlePresenceUpdate(presence: any) {
@@ -292,16 +327,14 @@ export class WhatsAppManager {
       const presenceValue = String((presenceData as any)?.lastKnownPresence || '');
       const isTyping = presenceValue === 'composing' || presenceValue === 'recording';
 
-      const indicator: TypingIndicator = {
-        chatId: id,
-        from: isGroup ? participantId : id,
-        isTyping,
-        participant: isGroup ? participantId : undefined,
-        timestamp: new Date(),
-      };
-
       if (this.typingCallback) {
-        this.typingCallback(indicator);
+        this.typingCallback({
+          chatId: id,
+          from: isGroup ? participantId : id,
+          isTyping,
+          participant: isGroup ? participantId : undefined,
+          timestamp: new Date(),
+        });
       }
     }
   }
@@ -312,6 +345,8 @@ export class WhatsAppManager {
     this.phoneNumber = null;
     this.qrCode = null;
     this.sock = null;
+    this.retryCount = 0;
+    this.stopReconnect();
     this.groups.clear();
     this.privateChats.clear();
     this.setStatus(ConnectionStatus.DISCONNECTED, 'Desconectado');
@@ -335,29 +370,10 @@ export class WhatsAppManager {
       msg.message?.videoMessage?.caption ||
       '';
 
-    if (msg.message?.audioMessage) {
-      hasMedia = true;
-      mediaType = 'audio';
-      mimetype = msg.message.audioMessage.mimetype || 'audio/ogg';
-    }
-
-    if (msg.message?.imageMessage) {
-      hasMedia = true;
-      mediaType = 'image';
-      mimetype = msg.message.imageMessage.mimetype || 'image/jpeg';
-    }
-
-    if (msg.message?.videoMessage) {
-      hasMedia = true;
-      mediaType = 'video';
-      mimetype = msg.message.videoMessage.mimetype || 'video/mp4';
-    }
-
-    if (msg.message?.documentMessage) {
-      hasMedia = true;
-      mediaType = 'document';
-      mimetype = msg.message.documentMessage.mimetype || 'application/octet-stream';
-    }
+    if (msg.message?.audioMessage) { hasMedia = true; mediaType = 'audio'; mimetype = msg.message.audioMessage.mimetype || 'audio/ogg'; }
+    if (msg.message?.imageMessage) { hasMedia = true; mediaType = 'image'; mimetype = msg.message.imageMessage.mimetype || 'image/jpeg'; }
+    if (msg.message?.videoMessage) { hasMedia = true; mediaType = 'video'; mimetype = msg.message.videoMessage.mimetype || 'video/mp4'; }
+    if (msg.message?.documentMessage) { hasMedia = true; mediaType = 'document'; mimetype = msg.message.documentMessage.mimetype || 'application/octet-stream'; }
 
     if (!messageText && !hasMedia) return;
 
@@ -390,11 +406,10 @@ export class WhatsAppManager {
   }
 
   private updatePrivateChat(chatId: string, lastMessage: string): void {
-    const existing = this.privateChats.get(chatId);
     this.privateChats.set(chatId, {
       id: chatId,
       phone: chatId.replace('@s.whatsapp.net', '').replace('@lid', ''),
-      name: existing?.name,
+      name: this.privateChats.get(chatId)?.name,
       isGroup: false,
       lastMessage,
       lastMessageTime: new Date(),
@@ -405,9 +420,7 @@ export class WhatsAppManager {
     if (!this.sock) return;
 
     try {
-      this.log('📋 Loading groups...');
       const groups = await this.sock.groupFetchAllParticipating();
-
       this.groups.clear();
       for (const [id, group] of Object.entries(groups)) {
         this.groups.set(id, {
@@ -418,181 +431,86 @@ export class WhatsAppManager {
           createdAt: new Date((group.creation || 0) * 1000),
         });
       }
-
       this.log(`✅ ${this.groups.size} groups loaded`);
-    } catch (error) {
-      this.log('⚠️ Error loading groups:', error);
+    } catch (e) {
+      this.log('Groups error:', e);
     }
   }
 
   async disconnect(): Promise<void> {
-    try {
-      this.log('🔌 Disconnecting...');
+    this.log('🔌 Disconnecting...');
+    this.shouldReconnect = false;
+    this.stopReconnect();
 
-      if (this.sock) {
-        try {
-          await this.sock.logout();
-        } catch {
-          // Ignore
-        }
-        this.sock.end(undefined);
-        this.sock = null;
-      }
-
-      this.handleDisconnected();
-      this.log('✅ Disconnected');
-    } catch (error) {
-      this.log('❌ Disconnect error:', error);
-      this.handleDisconnected();
+    if (this.sock) {
+      try { await this.sock.logout(); } catch { }
+      try { this.sock.end(undefined); } catch { }
+      this.sock = null;
     }
+
+    this.handleDisconnected();
+    this.log('✅ Disconnected');
   }
 
   async clearAuth(): Promise<void> {
-    try {
-      this.log('━'.repeat(40));
-      this.log('🗑️ CLEARING CREDENTIALS');
+    this.log('🗑️ Clearing credentials...');
+    this.shouldReconnect = false;
+    this.stopReconnect();
 
-      if (this.sock) {
-        try {
-          this.sock.end(undefined);
-        } catch {
-          // Ignore
-        }
-        this.sock = null;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      if (fs.existsSync(AUTH_FOLDER)) {
-        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-        this.log('✅ Auth folder removed');
-      }
-
-      fs.mkdirSync(AUTH_FOLDER, { recursive: true });
-
-      this.handleDisconnected();
-      this.log('✅ CREDENTIALS CLEARED');
-      this.log('━'.repeat(40));
-    } catch (error) {
-      this.log('❌ Error clearing credentials:', error);
-      throw error;
+    if (this.sock) {
+      try { this.sock.end(undefined); } catch { }
+      this.sock = null;
     }
+
+    await delay(500);
+
+    if (fs.existsSync(AUTH_FOLDER)) {
+      fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+    }
+    fs.mkdirSync(AUTH_FOLDER, { recursive: true });
+
+    this.handleDisconnected();
+    this.log('✅ Credentials cleared');
   }
 
   async sendTyping(to: string, isTyping: boolean): Promise<void> {
+    if (!this.sock || !this.isConnected) return;
     try {
-      if (!this.sock || !this.isConnected) return;
-
-      let jid = to;
-      if (!to.includes('@')) {
-        jid = `${to.replace(/\D/g, '')}@s.whatsapp.net`;
-      }
-
+      let jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
       if (to.includes('@lid')) return;
-
       await this.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
-    } catch {
-      // Silent fail
-    }
+    } catch { }
   }
 
   async sendMessage(to: string, message: string | AnyMessageContent): Promise<void> {
-    if (!this.sock || !this.isConnected) {
-      throw new Error('WhatsApp not connected');
-    }
+    if (!this.sock || !this.isConnected) throw new Error('WhatsApp not connected');
 
-    let jid = to;
-    if (!to.includes('@')) {
-      jid = `${to.replace(/\D/g, '')}@s.whatsapp.net`;
-    }
-
+    let jid = to.includes('@') ? to : `${to.replace(/\D/g, '')}@s.whatsapp.net`;
     const content = typeof message === 'string' ? { text: message } : message;
     await this.sock.sendMessage(jid, content);
-
-    this.log(`✅ Message sent to: ${to}`);
+    this.log(`✅ Sent to: ${to}`);
   }
 
-  // Callbacks
-  onMessage(callback: (context: MessageContext) => void): void {
-    this.messageCallback = callback;
-  }
+  onMessage(callback: (context: MessageContext) => void): void { this.messageCallback = callback; }
+  onStatusUpdate(callback: (status: WhatsAppConnection) => void): void { this.statusUpdateCallback = callback; this.notifyStatusUpdate(); }
+  onTyping(callback: (indicator: TypingIndicator) => void): void { this.typingCallback = callback; }
 
-  onStatusUpdate(callback: (status: WhatsAppConnection) => void): void {
-    this.statusUpdateCallback = callback;
-    this.notifyStatusUpdate();
-  }
-
-  onTyping(callback: (indicator: TypingIndicator) => void): void {
-    this.typingCallback = callback;
-  }
-
-  // Status
   getStatus(): WhatsAppConnection {
-    let status: 'disconnected' | 'connecting' | 'qr' | 'connected' = 'disconnected';
-
-    switch (this.connectionStatus) {
-      case ConnectionStatus.CONNECTED:
-        status = 'connected';
-        break;
-      case ConnectionStatus.QR_CODE_READY:
-        status = 'qr';
-        break;
-      case ConnectionStatus.CONNECTING:
-        status = 'connecting';
-        break;
-      default:
-        status = 'disconnected';
-    }
-
     return {
       isConnected: this.isConnected,
       qrCode: this.qrCode || undefined,
       phoneNumber: this.phoneNumber || undefined,
-      status,
+      status: this.connectionStatus as 'disconnected' | 'connecting' | 'connected' | 'qr',
       statusMessage: this.statusMessage,
     };
   }
 
-  async getGroups(): Promise<GroupInfo[]> {
-    return Array.from(this.groups.values());
-  }
-
-  async getChats(): Promise<ChatInfo[]> {
-    return Array.from(this.privateChats.values());
-  }
-
-  async getContacts(): Promise<Array<{
-    id: string;
-    phone: string;
-    name?: string;
-    pushName?: string;
-    isGroup: boolean;
-  }>> {
-    const contacts: Array<{
-      id: string;
-      phone: string;
-      name?: string;
-      isGroup: boolean;
-    }> = [];
-
-    for (const group of this.groups.values()) {
-      contacts.push({
-        id: group.id,
-        phone: group.id,
-        name: group.name,
-        isGroup: true,
-      });
-    }
-
-    for (const chat of this.privateChats.values()) {
-      contacts.push({
-        id: chat.id,
-        phone: chat.phone,
-        name: chat.name,
-        isGroup: false,
-      });
-    }
-
+  async getGroups(): Promise<GroupInfo[]> { return Array.from(this.groups.values()); }
+  async getChats(): Promise<ChatInfo[]> { return Array.from(this.privateChats.values()); }
+  async getContacts(): Promise<Array<{ id: string; phone: string; name?: string; isGroup: boolean; }>> {
+    const contacts: Array<{ id: string; phone: string; name?: string; isGroup: boolean; }> = [];
+    for (const g of this.groups.values()) contacts.push({ id: g.id, phone: g.id, name: g.name, isGroup: true });
+    for (const c of this.privateChats.values()) contacts.push({ id: c.id, phone: c.phone, name: c.name, isGroup: false });
     return contacts;
   }
 }

@@ -392,8 +392,8 @@ export function AgentAssignments() {
         <button
           onClick={() => setActiveTab('groups')}
           className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${activeTab === 'groups'
-              ? 'border-purple-500 text-purple-400'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
+            ? 'border-purple-500 text-purple-400'
+            : 'border-transparent text-text-secondary hover:text-text-primary'
             }`}
         >
           <Users className="w-5 h-5" />
@@ -406,8 +406,8 @@ export function AgentAssignments() {
         <button
           onClick={() => setActiveTab('private')}
           className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-colors ${activeTab === 'private'
-              ? 'border-blue-500 text-blue-400'
-              : 'border-transparent text-text-secondary hover:text-text-primary'
+            ? 'border-blue-500 text-blue-400'
+            : 'border-transparent text-text-secondary hover:text-text-primary'
             }`}
         >
           <User className="w-5 h-5" />
