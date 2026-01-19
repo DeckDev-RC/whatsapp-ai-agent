@@ -7,8 +7,10 @@ import makeWASocket, {
   WASocket,
   isJidGroup,
   AnyMessageContent,
-  ConnectionState,
   Browsers,
+  WAMessageKey,
+  WAMessageContent,
+  proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -18,14 +20,14 @@ import path from 'path';
 import type { WhatsAppConnection, MessageContext, GroupInfo, ChatInfo, TypingIndicator } from '../../shared/types';
 
 // ============================================
-// WHATSAPP MANAGER - Baileys Integration (v2)
-// Completely rewritten for robust connection
+// WHATSAPP MANAGER - Baileys Integration (v3)
+// Following official Baileys example pattern
 // ============================================
 
 const AUTH_FOLDER = path.join(process.cwd(), 'auth_info_baileys');
 
-// Silenced logger for Baileys
-const logger = pino({ level: 'silent' });
+// Logger configuration
+const baileysLogger = pino({ level: 'silent' });
 
 enum ConnectionStatus {
   DISCONNECTED = 'disconnected',
@@ -43,9 +45,6 @@ export class WhatsAppManager {
   private connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED;
   private statusMessage: string = 'Desconectado';
   private isConnecting = false;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
 
   // Callbacks
   private messageCallback: ((context: MessageContext) => void) | null = null;
@@ -57,7 +56,7 @@ export class WhatsAppManager {
   private privateChats: Map<string, ChatInfo> = new Map();
 
   constructor() {
-    this.log('WhatsApp Manager (Baileys v2) initialized');
+    this.log('WhatsApp Manager (Baileys v3) initialized');
     // Ensure auth folder exists
     if (!fs.existsSync(AUTH_FOLDER)) {
       fs.mkdirSync(AUTH_FOLDER, { recursive: true });
@@ -98,14 +97,9 @@ export class WhatsAppManager {
    */
   async hasSavedCredentials(): Promise<boolean> {
     try {
-      if (fs.existsSync(AUTH_FOLDER)) {
-        const files = fs.readdirSync(AUTH_FOLDER);
-        const credsFile = path.join(AUTH_FOLDER, 'creds.json');
-        return fs.existsSync(credsFile) && fs.statSync(credsFile).size > 0;
-      }
-      return false;
-    } catch (error) {
-      this.log('Error checking credentials:', error);
+      const credsFile = path.join(AUTH_FOLDER, 'creds.json');
+      return fs.existsSync(credsFile) && fs.statSync(credsFile).size > 0;
+    } catch {
       return false;
     }
   }
@@ -128,10 +122,9 @@ export class WhatsAppManager {
   }
 
   /**
-   * Main connection method - completely rewritten
+   * Main connection method - following official example
    */
   async connect(): Promise<void> {
-    // Prevent multiple simultaneous connections
     if (this.isConnecting) {
       this.log('⚠️ Connection already in progress');
       return;
@@ -140,12 +133,6 @@ export class WhatsAppManager {
     if (this.isConnected && this.sock) {
       this.log('✅ Already connected');
       return;
-    }
-
-    // Clear any pending reconnect
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
     }
 
     this.isConnecting = true;
@@ -161,181 +148,162 @@ export class WhatsAppManager {
       const { version, isLatest } = await fetchLatestBaileysVersion();
       this.log(`Using Baileys version: ${version.join('.')}, isLatest: ${isLatest}`);
 
-      // Create socket with robust configuration
+      // Create socket - following official example pattern
       this.sock = makeWASocket({
         version,
+        logger: baileysLogger,
         auth: {
           creds: state.creds,
-          keys: makeCacheableSignalKeyStore(state.keys, logger),
+          keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
         },
-        printQRInTerminal: true, // Also print in terminal for debugging
-        logger,
-        browser: Browsers.ubuntu('Chrome'), // Use standard browser signature
-        markOnlineOnConnect: false, // Don't mark online immediately
-        syncFullHistory: false, // Don't sync full history
-        connectTimeoutMs: 60000, // 60 second timeout
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000, // Keep alive every 30 seconds
-        emitOwnEvents: false,
-        fireInitQueries: true,
+        browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
-        getMessage: async (key) => {
-          // Return empty message for retry
-          return { conversation: '' };
-        },
+        // Implement getMessage for retry handling
+        getMessage: this.getMessage.bind(this),
       });
 
-      // Handle connection updates
-      this.sock.ev.on('connection.update', async (update: Partial<ConnectionState>) => {
-        await this.handleConnectionUpdate(update, saveCreds);
+      // Use sock.ev.process() pattern like official example
+      this.sock.ev.process(async (events) => {
+        // Connection update
+        if (events['connection.update']) {
+          const update = events['connection.update'];
+          const { connection, lastDisconnect, qr } = update;
+
+          this.log('📡 Connection event:', { connection, hasQR: !!qr });
+
+          // QR Code received
+          if (qr) {
+            try {
+              this.qrCode = await qrcode.toDataURL(qr, {
+                width: 256,
+                margin: 2,
+              });
+              this.setStatus(ConnectionStatus.QR_CODE_READY, 'QR Code pronto - Escaneie com WhatsApp');
+              this.log('📱 QR Code generated');
+            } catch (error) {
+              this.log('Error generating QR:', error);
+            }
+          }
+
+          // Connection closed
+          if (connection === 'close') {
+            this.isConnecting = false;
+            const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+            const errorMessage = (lastDisconnect?.error as Error)?.message || 'Unknown';
+
+            this.log(`❌ Connection closed - Code: ${statusCode}, Message: ${errorMessage}`);
+
+            // Reconnect if not logged out - following official example
+            if (statusCode !== DisconnectReason.loggedOut) {
+              this.log('� Reconnecting...');
+              // Reset state
+              this.sock = null;
+              this.isConnected = false;
+              this.qrCode = null;
+              // Wait a bit before reconnecting
+              setTimeout(() => {
+                this.isConnecting = false;
+                this.connect();
+              }, 3000);
+            } else {
+              this.log('🚪 Logged out - clearing credentials');
+              this.handleDisconnected();
+            }
+          }
+
+          // Connection opened
+          if (connection === 'open') {
+            this.log('✅ Connection OPEN!');
+            this.isConnected = true;
+            this.isConnecting = false;
+            this.qrCode = null;
+
+            if (this.sock?.user) {
+              this.phoneNumber = this.sock.user.id.split(':')[0].replace('@s.whatsapp.net', '');
+              this.log(`📱 Connected as: ${this.phoneNumber}`);
+            }
+
+            this.setStatus(ConnectionStatus.CONNECTED, 'Conectado com sucesso');
+
+            // Load groups
+            try {
+              await this.loadGroupsAndChats();
+            } catch (e) {
+              this.log('Error loading groups:', e);
+            }
+          }
+        }
+
+        // Credentials update
+        if (events['creds.update']) {
+          await saveCreds();
+        }
+
+        // Messages received
+        if (events['messages.upsert']) {
+          const upsert = events['messages.upsert'];
+          if (upsert.type === 'notify') {
+            for (const msg of upsert.messages) {
+              try {
+                await this.processMessage(msg);
+              } catch (error) {
+                this.log('Error processing message:', error);
+              }
+            }
+          }
+        }
+
+        // Presence update (typing)
+        if (events['presence.update']) {
+          const presence = events['presence.update'];
+          try {
+            this.handlePresenceUpdate(presence);
+          } catch (error) {
+            this.log('Error handling presence:', error);
+          }
+        }
       });
 
-      // Save credentials on update
-      this.sock.ev.on('creds.update', saveCreds);
-
-      // Setup message handlers
-      this.setupMessageHandler();
-      this.setupTypingHandler();
-
-      this.log('✅ Socket created and handlers configured');
+      this.log('✅ Socket created with event processor');
 
     } catch (error: any) {
       this.log('❌ Connection error:', error.message);
-      this.setStatus(ConnectionStatus.ERROR, `Error: ${error.message}`);
+      this.setStatus(ConnectionStatus.ERROR, `Erro: ${error.message}`);
       this.isConnecting = false;
-      this.scheduleReconnect();
       throw error;
     }
   }
 
   /**
-   * Handle connection state updates
+   * getMessage implementation for retry handling
    */
-  private async handleConnectionUpdate(update: Partial<ConnectionState>, saveCreds: () => Promise<void>) {
-    const { connection, lastDisconnect, qr } = update;
-
-    this.log('📡 Connection update:', { connection, hasQR: !!qr, lastDisconnect: lastDisconnect?.error?.message });
-
-    // QR Code generated
-    if (qr) {
-      try {
-        this.qrCode = await qrcode.toDataURL(qr, {
-          width: 256,
-          margin: 2,
-          color: {
-            dark: '#000000',
-            light: '#FFFFFF',
-          },
-        });
-        this.setStatus(ConnectionStatus.QR_CODE_READY, 'QR Code pronto - Escaneie com WhatsApp');
-        this.log('📱 QR Code generated successfully');
-        this.reconnectAttempts = 0; // Reset attempts when QR is shown
-      } catch (error) {
-        this.log('Error generating QR:', error);
-      }
-    }
-
-    // Connection opened
-    if (connection === 'open') {
-      this.log('✅ Connection OPEN!');
-      this.isConnected = true;
-      this.isConnecting = false;
-      this.qrCode = null;
-      this.reconnectAttempts = 0;
-
-      // Get phone number
-      if (this.sock?.user) {
-        this.phoneNumber = this.sock.user.id.split(':')[0].replace('@s.whatsapp.net', '');
-        this.log(`📱 Connected as: ${this.phoneNumber}`);
-      }
-
-      this.setStatus(ConnectionStatus.CONNECTED, 'Conectado com sucesso');
-
-      // Load groups and chats
-      try {
-        await this.loadGroupsAndChats();
-      } catch (e) {
-        this.log('Error loading groups:', e);
-      }
-    }
-
-    // Connection closed
-    if (connection === 'close') {
-      this.isConnecting = false;
-      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const errorMessage = (lastDisconnect?.error as Boom)?.message || 'Unknown error';
-
-      this.log(`❌ Connection closed - Code: ${statusCode}, Message: ${errorMessage}`);
-
-      // Handle different disconnect reasons
-      if (statusCode === DisconnectReason.loggedOut) {
-        // User logged out - clear credentials and don't reconnect
-        this.log('🚪 Logged out by user');
-        await this.clearAuth();
-        this.handleDisconnected();
-      } else if (statusCode === DisconnectReason.restartRequired) {
-        // Restart required - reconnect immediately
-        this.log('🔄 Restart required');
-        this.scheduleReconnect(1000);
-      } else if (statusCode === DisconnectReason.connectionClosed ||
-        statusCode === DisconnectReason.connectionLost ||
-        statusCode === DisconnectReason.timedOut) {
-        // Network issues - reconnect with backoff
-        this.log('📡 Network issue, will reconnect...');
-        this.scheduleReconnect();
-      } else if (statusCode === DisconnectReason.badSession) {
-        // Bad session - clear and reconnect
-        this.log('⚠️ Bad session, clearing credentials...');
-        await this.clearAuth();
-        this.scheduleReconnect(2000);
-      } else if (statusCode === 515) {
-        // Stream error - wait longer before reconnect
-        this.log('⚠️ Stream error (515), waiting before reconnect...');
-        this.scheduleReconnect(10000);
-      } else {
-        // Other errors - try to reconnect
-        this.log(`⚠️ Disconnect code ${statusCode}, will try to reconnect...`);
-        this.scheduleReconnect();
-      }
-    }
+  private async getMessage(key: WAMessageKey): Promise<WAMessageContent | undefined> {
+    // Return empty message for retry - official pattern
+    return proto.Message.fromObject({});
   }
 
-  /**
-   * Schedule a reconnection with exponential backoff
-   */
-  private scheduleReconnect(delayMs?: number) {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-    }
+  private handlePresenceUpdate(presence: any) {
+    const { id, presences } = presence;
+    if (!id || !presences) return;
 
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.log('❌ Max reconnection attempts reached');
-      this.setStatus(ConnectionStatus.ERROR, 'Falha na conexão após várias tentativas');
-      this.handleDisconnected();
-      return;
-    }
+    const isGroup = id.includes('@g.us');
 
-    this.reconnectAttempts++;
+    for (const [participantId, presenceData] of Object.entries(presences)) {
+      const presenceValue = String((presenceData as any)?.lastKnownPresence || '');
+      const isTyping = presenceValue === 'composing' || presenceValue === 'recording';
 
-    // Exponential backoff: 3s, 6s, 12s, 24s, 48s
-    const delay = delayMs || Math.min(3000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
+      const indicator: TypingIndicator = {
+        chatId: id,
+        from: isGroup ? participantId : id,
+        isTyping,
+        participant: isGroup ? participantId : undefined,
+        timestamp: new Date(),
+      };
 
-    this.log(`🔄 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
-    this.setStatus(ConnectionStatus.CONNECTING, `Reconectando em ${Math.round(delay / 1000)}s...`);
-
-    this.reconnectTimeout = setTimeout(async () => {
-      try {
-        // Cleanup old socket
-        if (this.sock) {
-          this.sock.end(undefined);
-          this.sock = null;
-        }
-        this.isConnecting = false;
-        await this.connect();
-      } catch (error) {
-        this.log('Reconnection failed:', error);
+      if (this.typingCallback) {
+        this.typingCallback(indicator);
       }
-    }, delay);
+    }
   }
 
   private handleDisconnected() {
@@ -343,82 +311,21 @@ export class WhatsAppManager {
     this.isConnecting = false;
     this.phoneNumber = null;
     this.qrCode = null;
+    this.sock = null;
     this.groups.clear();
     this.privateChats.clear();
-    this.reconnectAttempts = 0;
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
     this.setStatus(ConnectionStatus.DISCONNECTED, 'Desconectado');
   }
 
-  private setupMessageHandler(): void {
-    if (!this.sock) return;
-
-    this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return;
-
-      for (const msg of messages) {
-        try {
-          await this.processMessage(msg);
-        } catch (error) {
-          this.log('Error processing message:', error);
-        }
-      }
-    });
-
-    this.log('✅ Message handler configured');
-  }
-
-  private setupTypingHandler(): void {
-    if (!this.sock) return;
-
-    this.sock.ev.on('presence.update', async ({ id, presences }) => {
-      try {
-        if (!id) return;
-
-        const isGroup = id.includes('@g.us');
-        const chatId = id;
-
-        for (const [participantId, presence] of Object.entries(presences)) {
-          const presenceValue = String(presence || '');
-          const isTyping = presenceValue === 'composing' || presenceValue === 'recording';
-
-          if (isTyping || presenceValue === 'available' || presenceValue === 'unavailable') {
-            const indicator: TypingIndicator = {
-              chatId,
-              from: isGroup ? participantId : chatId,
-              isTyping,
-              participant: isGroup ? participantId : undefined,
-              timestamp: new Date(),
-            };
-
-            if (this.typingCallback) {
-              this.typingCallback(indicator);
-            }
-          }
-        }
-      } catch (error) {
-        this.log('Error processing typing indicator:', error);
-      }
-    });
-
-    this.log('✅ Typing handler configured');
-  }
-
   private async processMessage(msg: WAMessage): Promise<void> {
-    // Ignore own messages
     if (msg.key.fromMe) return;
 
     const chatId = msg.key.remoteJid!;
     const isGroup = isJidGroup(chatId);
 
-    // Detect message type
     let messageText = '';
     let hasMedia = false;
     let mediaType: 'audio' | 'image' | 'video' | 'document' | undefined;
-    let mediaBuffer: Buffer | undefined;
     let mimetype: string | undefined;
 
     messageText =
@@ -431,7 +338,7 @@ export class WhatsAppManager {
     if (msg.message?.audioMessage) {
       hasMedia = true;
       mediaType = 'audio';
-      mimetype = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
+      mimetype = msg.message.audioMessage.mimetype || 'audio/ogg';
     }
 
     if (msg.message?.imageMessage) {
@@ -454,12 +361,7 @@ export class WhatsAppManager {
 
     if (!messageText && !hasMedia) return;
 
-    let from: string;
-    if (isGroup) {
-      from = msg.key.participant || chatId;
-    } else {
-      from = chatId;
-    }
+    const from = isGroup ? (msg.key.participant || chatId) : chatId;
 
     const context: MessageContext = {
       from,
@@ -470,7 +372,6 @@ export class WhatsAppManager {
       messageId: msg.key.id || undefined,
       hasMedia,
       mediaType,
-      mediaBuffer,
       mimetype,
       rawMessage: hasMedia ? msg : undefined,
     };
@@ -528,16 +429,11 @@ export class WhatsAppManager {
     try {
       this.log('🔌 Disconnecting...');
 
-      if (this.reconnectTimeout) {
-        clearTimeout(this.reconnectTimeout);
-        this.reconnectTimeout = null;
-      }
-
       if (this.sock) {
         try {
           await this.sock.logout();
-        } catch (e) {
-          // Ignore logout errors
+        } catch {
+          // Ignore
         }
         this.sock.end(undefined);
         this.sock = null;
@@ -555,35 +451,23 @@ export class WhatsAppManager {
     try {
       this.log('━'.repeat(40));
       this.log('🗑️ CLEARING CREDENTIALS');
-      this.log('━'.repeat(40));
 
-      // Stop any reconnection attempts
-      if (this.reconnectTimeout) {
-        clearTimeout(this.reconnectTimeout);
-        this.reconnectTimeout = null;
-      }
-
-      // Disconnect socket
       if (this.sock) {
         try {
           this.sock.end(undefined);
-          await this.sock.logout().catch(() => { });
-        } catch (e) {
+        } catch {
           // Ignore
         }
         this.sock = null;
       }
 
-      // Wait a bit
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Remove auth folder
       if (fs.existsSync(AUTH_FOLDER)) {
         fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
         this.log('✅ Auth folder removed');
       }
 
-      // Recreate empty folder
       fs.mkdirSync(AUTH_FOLDER, { recursive: true });
 
       this.handleDisconnected();
@@ -601,38 +485,31 @@ export class WhatsAppManager {
 
       let jid = to;
       if (!to.includes('@')) {
-        const cleanPhone = to.replace(/\D/g, '');
-        jid = `${cleanPhone}@s.whatsapp.net`;
+        jid = `${to.replace(/\D/g, '')}@s.whatsapp.net`;
       }
 
       if (to.includes('@lid')) return;
 
       await this.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
-    } catch (error) {
+    } catch {
       // Silent fail
     }
   }
 
   async sendMessage(to: string, message: string | AnyMessageContent): Promise<void> {
-    try {
-      if (!this.sock || !this.isConnected) {
-        throw new Error('WhatsApp not connected');
-      }
-
-      let jid = to;
-      if (!to.includes('@')) {
-        const cleanPhone = to.replace(/\D/g, '');
-        jid = `${cleanPhone}@s.whatsapp.net`;
-      }
-
-      const content = typeof message === 'string' ? { text: message } : message;
-      await this.sock.sendMessage(jid, content);
-
-      this.log(`✅ Message sent to: ${to}`);
-    } catch (error: any) {
-      this.log('❌ Send message error:', error.message);
-      throw error;
+    if (!this.sock || !this.isConnected) {
+      throw new Error('WhatsApp not connected');
     }
+
+    let jid = to;
+    if (!to.includes('@')) {
+      jid = `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+    }
+
+    const content = typeof message === 'string' ? { text: message } : message;
+    await this.sock.sendMessage(jid, content);
+
+    this.log(`✅ Message sent to: ${to}`);
   }
 
   // Callbacks
@@ -695,7 +572,6 @@ export class WhatsAppManager {
       id: string;
       phone: string;
       name?: string;
-      pushName?: string;
       isGroup: boolean;
     }> = [];
 
