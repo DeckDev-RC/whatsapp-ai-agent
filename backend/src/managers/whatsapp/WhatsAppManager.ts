@@ -7,6 +7,8 @@ import makeWASocket, {
   WASocket,
   isJidGroup,
   AnyMessageContent,
+  ConnectionState,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -16,8 +18,14 @@ import path from 'path';
 import type { WhatsAppConnection, MessageContext, GroupInfo, ChatInfo, TypingIndicator } from '../../shared/types';
 
 // ============================================
-// WHATSAPP MANAGER - Baileys Integration
+// WHATSAPP MANAGER - Baileys Integration (v2)
+// Completely rewritten for robust connection
 // ============================================
+
+const AUTH_FOLDER = path.join(process.cwd(), 'auth_info_baileys');
+
+// Silenced logger for Baileys
+const logger = pino({ level: 'silent' });
 
 enum ConnectionStatus {
   DISCONNECTED = 'disconnected',
@@ -34,69 +42,35 @@ export class WhatsAppManager {
   private phoneNumber: string | null = null;
   private connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED;
   private statusMessage: string = 'Desconectado';
+  private isConnecting = false;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
 
   // Callbacks
   private messageCallback: ((context: MessageContext) => void) | null = null;
   private statusUpdateCallback: ((status: WhatsAppConnection) => void) | null = null;
   private typingCallback: ((indicator: TypingIndicator) => void) | null = null;
 
-  // Rastreamento
+  // Tracking
   private groups: Map<string, GroupInfo> = new Map();
   private privateChats: Map<string, ChatInfo> = new Map();
 
   constructor() {
-    this.log('WhatsApp Manager (Baileys) initialized');
-  }
-
-  /**
-   * Verifica se existem credenciais salvas para auto-conexão
-   */
-  async hasSavedCredentials(): Promise<boolean> {
-    try {
-      const authPath = path.join(process.cwd(), 'auth_info_baileys');
-
-      // Verificar se o diretório existe e tem arquivos de credenciais
-      if (fs.existsSync(authPath)) {
-        const files = fs.readdirSync(authPath);
-        // Baileys salva credenciais em arquivos como 'creds.json' e arquivos de chaves
-        // Verificar se há pelo menos um arquivo que não seja vazio
-        const hasCreds = files.some(file => {
-          const filePath = path.join(authPath, file);
-          const stats = fs.statSync(filePath);
-          return stats.isFile() && stats.size > 0;
-        });
-        return hasCreds;
-      }
-      return false;
-    } catch (error) {
-      this.log('Erro ao verificar credenciais:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Tenta conectar automaticamente se houver credenciais salvas
-   */
-  async autoConnect(): Promise<void> {
-    try {
-      const hasCreds = await this.hasSavedCredentials();
-      if (hasCreds && !this.isConnected) {
-        this.log('🔄 Credenciais encontradas, conectando automaticamente...');
-        await this.connect();
-      } else if (!hasCreds) {
-        this.log('ℹ️ Nenhuma credencial salva encontrada. Conecte manualmente.');
-      } else {
-        this.log('ℹ️ Já conectado.');
-      }
-    } catch (error) {
-      this.log('Erro na auto-conexão:', error);
-      // Não lançar erro para não quebrar a inicialização do app
+    this.log('WhatsApp Manager (Baileys v2) initialized');
+    // Ensure auth folder exists
+    if (!fs.existsSync(AUTH_FOLDER)) {
+      fs.mkdirSync(AUTH_FOLDER, { recursive: true });
     }
   }
 
   private log(message: string, data?: any) {
     const timestamp = new Date().toISOString();
-    console.log(`[${timestamp}] WhatsApp Manager: ${message}`, data || '');
+    if (data !== undefined) {
+      console.log(`[${timestamp}] WhatsApp: ${message}`, typeof data === 'object' ? JSON.stringify(data, null, 2) : data);
+    } else {
+      console.log(`[${timestamp}] WhatsApp: ${message}`);
+    }
   }
 
   private setStatus(status: ConnectionStatus, message: string) {
@@ -119,109 +93,263 @@ export class WhatsAppManager {
     }
   }
 
-  // ===== Connection =====
-  async connect(): Promise<void> {
+  /**
+   * Check if saved credentials exist
+   */
+  async hasSavedCredentials(): Promise<boolean> {
     try {
-      if (this.isConnected) {
-        this.log('Already connected');
-        return;
+      if (fs.existsSync(AUTH_FOLDER)) {
+        const files = fs.readdirSync(AUTH_FOLDER);
+        const credsFile = path.join(AUTH_FOLDER, 'creds.json');
+        return fs.existsSync(credsFile) && fs.statSync(credsFile).size > 0;
       }
+      return false;
+    } catch (error) {
+      this.log('Error checking credentials:', error);
+      return false;
+    }
+  }
 
-      this.setStatus(ConnectionStatus.CONNECTING, 'Conectando ao WhatsApp...');
-      this.log('🚀 Iniciando conexão com Baileys...');
+  /**
+   * Auto-connect if credentials exist
+   */
+  async autoConnect(): Promise<void> {
+    try {
+      const hasCreds = await this.hasSavedCredentials();
+      if (hasCreds && !this.isConnected && !this.isConnecting) {
+        this.log('🔄 Credentials found, auto-connecting...');
+        await this.connect();
+      } else if (!hasCreds) {
+        this.log('ℹ️ No saved credentials. Manual connection required.');
+      }
+    } catch (error) {
+      this.log('Auto-connect error:', error);
+    }
+  }
 
-      // Configurar autenticação
-      const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-      const { version } = await fetchLatestBaileysVersion();
+  /**
+   * Main connection method - completely rewritten
+   */
+  async connect(): Promise<void> {
+    // Prevent multiple simultaneous connections
+    if (this.isConnecting) {
+      this.log('⚠️ Connection already in progress');
+      return;
+    }
 
-      // Criar socket
+    if (this.isConnected && this.sock) {
+      this.log('✅ Already connected');
+      return;
+    }
+
+    // Clear any pending reconnect
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    this.isConnecting = true;
+    this.setStatus(ConnectionStatus.CONNECTING, 'Iniciando conexão...');
+
+    try {
+      this.log('🚀 Starting Baileys connection...');
+
+      // Setup auth state
+      const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+
+      // Fetch latest version
+      const { version, isLatest } = await fetchLatestBaileysVersion();
+      this.log(`Using Baileys version: ${version.join('.')}, isLatest: ${isLatest}`);
+
+      // Create socket with robust configuration
       this.sock = makeWASocket({
         version,
         auth: {
           creds: state.creds,
-          keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
+          keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' }),
-        browser: ['WhatsApp AI Agent', 'Chrome', '1.0.0'],
-        markOnlineOnConnect: true,
+        printQRInTerminal: true, // Also print in terminal for debugging
+        logger,
+        browser: Browsers.ubuntu('Chrome'), // Use standard browser signature
+        markOnlineOnConnect: false, // Don't mark online immediately
+        syncFullHistory: false, // Don't sync full history
+        connectTimeoutMs: 60000, // 60 second timeout
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000, // Keep alive every 30 seconds
+        emitOwnEvents: false,
+        fireInitQueries: true,
+        generateHighQualityLinkPreview: false,
+        getMessage: async (key) => {
+          // Return empty message for retry
+          return { conversation: '' };
+        },
       });
 
-      // Handler de conexão
-      this.sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-          try {
-            this.qrCode = await qrcode.toDataURL(qr);
-            this.setStatus(ConnectionStatus.QR_CODE_READY, 'QR Code gerado - Escaneie com WhatsApp');
-            this.log('📱 QR Code gerado');
-          } catch (error) {
-            this.log('Erro ao gerar QR Code:', error);
-          }
-        }
-
-        if (connection === 'close') {
-          const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-          this.log('Conexão fechada. Reconectar?', shouldReconnect);
-
-          if (shouldReconnect) {
-            this.log('Reconectando...');
-            setTimeout(() => this.connect(), 3000);
-          } else {
-            this.handleDisconnected();
-          }
-        } else if (connection === 'open') {
-          await this.handleConnected();
-        }
+      // Handle connection updates
+      this.sock.ev.on('connection.update', async (update: Partial<ConnectionState>) => {
+        await this.handleConnectionUpdate(update, saveCreds);
       });
 
-      // Salvar credenciais
+      // Save credentials on update
       this.sock.ev.on('creds.update', saveCreds);
 
-      // Handler de mensagens
+      // Setup message handlers
       this.setupMessageHandler();
-
-      // Handler de indicador de digitação
       this.setupTypingHandler();
 
-      this.log('✅ Socket criado e handlers configurados');
+      this.log('✅ Socket created and handlers configured');
+
     } catch (error: any) {
-      this.log('❌ Erro na conexão:', error.message);
-      this.setStatus(ConnectionStatus.ERROR, `Erro: ${error.message}`);
+      this.log('❌ Connection error:', error.message);
+      this.setStatus(ConnectionStatus.ERROR, `Error: ${error.message}`);
+      this.isConnecting = false;
+      this.scheduleReconnect();
       throw error;
     }
   }
 
-  private async handleConnected() {
-    try {
-      this.log('✅ Conectado ao WhatsApp!');
+  /**
+   * Handle connection state updates
+   */
+  private async handleConnectionUpdate(update: Partial<ConnectionState>, saveCreds: () => Promise<void>) {
+    const { connection, lastDisconnect, qr } = update;
 
-      // Obter número de telefone
+    this.log('📡 Connection update:', { connection, hasQR: !!qr, lastDisconnect: lastDisconnect?.error?.message });
+
+    // QR Code generated
+    if (qr) {
+      try {
+        this.qrCode = await qrcode.toDataURL(qr, {
+          width: 256,
+          margin: 2,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF',
+          },
+        });
+        this.setStatus(ConnectionStatus.QR_CODE_READY, 'QR Code pronto - Escaneie com WhatsApp');
+        this.log('📱 QR Code generated successfully');
+        this.reconnectAttempts = 0; // Reset attempts when QR is shown
+      } catch (error) {
+        this.log('Error generating QR:', error);
+      }
+    }
+
+    // Connection opened
+    if (connection === 'open') {
+      this.log('✅ Connection OPEN!');
+      this.isConnected = true;
+      this.isConnecting = false;
+      this.qrCode = null;
+      this.reconnectAttempts = 0;
+
+      // Get phone number
       if (this.sock?.user) {
-        this.phoneNumber = this.sock.user.id.split(':')[0];
-        this.log(`📱 Conectado como: ${this.phoneNumber}`);
+        this.phoneNumber = this.sock.user.id.split(':')[0].replace('@s.whatsapp.net', '');
+        this.log(`📱 Connected as: ${this.phoneNumber}`);
       }
 
-      this.isConnected = true;
-      this.qrCode = null;
       this.setStatus(ConnectionStatus.CONNECTED, 'Conectado com sucesso');
 
-      // Carregar grupos e chats
-      await this.loadGroupsAndChats();
-    } catch (error) {
-      this.log('Erro ao processar conexão:', error);
-      this.isConnected = true;
-      this.setStatus(ConnectionStatus.CONNECTED, 'Conectado');
+      // Load groups and chats
+      try {
+        await this.loadGroupsAndChats();
+      } catch (e) {
+        this.log('Error loading groups:', e);
+      }
     }
+
+    // Connection closed
+    if (connection === 'close') {
+      this.isConnecting = false;
+      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const errorMessage = (lastDisconnect?.error as Boom)?.message || 'Unknown error';
+
+      this.log(`❌ Connection closed - Code: ${statusCode}, Message: ${errorMessage}`);
+
+      // Handle different disconnect reasons
+      if (statusCode === DisconnectReason.loggedOut) {
+        // User logged out - clear credentials and don't reconnect
+        this.log('🚪 Logged out by user');
+        await this.clearAuth();
+        this.handleDisconnected();
+      } else if (statusCode === DisconnectReason.restartRequired) {
+        // Restart required - reconnect immediately
+        this.log('🔄 Restart required');
+        this.scheduleReconnect(1000);
+      } else if (statusCode === DisconnectReason.connectionClosed ||
+        statusCode === DisconnectReason.connectionLost ||
+        statusCode === DisconnectReason.timedOut) {
+        // Network issues - reconnect with backoff
+        this.log('📡 Network issue, will reconnect...');
+        this.scheduleReconnect();
+      } else if (statusCode === DisconnectReason.badSession) {
+        // Bad session - clear and reconnect
+        this.log('⚠️ Bad session, clearing credentials...');
+        await this.clearAuth();
+        this.scheduleReconnect(2000);
+      } else if (statusCode === 515) {
+        // Stream error - wait longer before reconnect
+        this.log('⚠️ Stream error (515), waiting before reconnect...');
+        this.scheduleReconnect(10000);
+      } else {
+        // Other errors - try to reconnect
+        this.log(`⚠️ Disconnect code ${statusCode}, will try to reconnect...`);
+        this.scheduleReconnect();
+      }
+    }
+  }
+
+  /**
+   * Schedule a reconnection with exponential backoff
+   */
+  private scheduleReconnect(delayMs?: number) {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.log('❌ Max reconnection attempts reached');
+      this.setStatus(ConnectionStatus.ERROR, 'Falha na conexão após várias tentativas');
+      this.handleDisconnected();
+      return;
+    }
+
+    this.reconnectAttempts++;
+
+    // Exponential backoff: 3s, 6s, 12s, 24s, 48s
+    const delay = delayMs || Math.min(3000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
+
+    this.log(`🔄 Scheduling reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+    this.setStatus(ConnectionStatus.CONNECTING, `Reconectando em ${Math.round(delay / 1000)}s...`);
+
+    this.reconnectTimeout = setTimeout(async () => {
+      try {
+        // Cleanup old socket
+        if (this.sock) {
+          this.sock.ev.removeAllListeners();
+          this.sock = null;
+        }
+        this.isConnecting = false;
+        await this.connect();
+      } catch (error) {
+        this.log('Reconnection failed:', error);
+      }
+    }, delay);
   }
 
   private handleDisconnected() {
     this.isConnected = false;
+    this.isConnecting = false;
     this.phoneNumber = null;
     this.qrCode = null;
     this.groups.clear();
     this.privateChats.clear();
+    this.reconnectAttempts = 0;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
     this.setStatus(ConnectionStatus.DISCONNECTED, 'Desconectado');
   }
 
@@ -235,29 +363,25 @@ export class WhatsAppManager {
         try {
           await this.processMessage(msg);
         } catch (error) {
-          this.log('Erro ao processar mensagem:', error);
+          this.log('Error processing message:', error);
         }
       }
     });
 
-    this.log('✅ Message handler configurado');
+    this.log('✅ Message handler configured');
   }
 
   private setupTypingHandler(): void {
     if (!this.sock) return;
 
-    // Handler para eventos de presença (digitando)
     this.sock.ev.on('presence.update', async ({ id, presences }) => {
       try {
         if (!id) return;
 
-        // Determinar se é grupo ou chat privado
         const isGroup = id.includes('@g.us');
         const chatId = id;
 
-        // Processar cada presença
         for (const [participantId, presence] of Object.entries(presences)) {
-          // Verificar se está digitando (composing ou recording)
           const presenceValue = String(presence || '');
           const isTyping = presenceValue === 'composing' || presenceValue === 'recording';
 
@@ -276,120 +400,27 @@ export class WhatsAppManager {
           }
         }
       } catch (error) {
-        this.log('Erro ao processar indicador de digitação:', error);
+        this.log('Error processing typing indicator:', error);
       }
     });
 
-    this.log('✅ Typing handler configurado');
-  }
-
-  /**
-   * Método para extrair e logar todas as informações disponíveis do contato
-   * NÃO normaliza automaticamente - apenas coleta dados para análise
-   */
-  private async identifyRealPhone(chatId: string, msg: WAMessage): Promise<string> {
-    this.log(`📋 Analisando contato: ${chatId}`);
-
-    // Extrair TODOS os dados disponíveis
-    const contactData: any = {
-      chatId,
-      remoteJid: msg.key.remoteJid,
-      pushName: msg.pushName || null,
-      participant: msg.key.participant || null,
-      fromMe: msg.key.fromMe,
-    };
-
-    // Verificar se é lid
-    const isLid = chatId.includes('@lid');
-    contactData.isLid = isLid;
-
-    // Se for lid, tentar extrair número
-    if (isLid) {
-      const lidMatch = chatId.match(/^(\d+)@lid$/);
-      if (lidMatch) {
-        contactData.lidNumber = lidMatch[1];
-      }
-    }
-
-    // Verificar pushName se parece número
-    if (msg.pushName && /^\+?\d+$/.test(msg.pushName.replace(/\s/g, ''))) {
-      contactData.pushNameAsNumber = msg.pushName.replace(/\D/g, '');
-    }
-
-    // Verificar contextInfo
-    if (msg.message?.extendedTextMessage?.contextInfo?.participant) {
-      contactData.contextParticipant = msg.message.extendedTextMessage.contextInfo.participant;
-    }
-
-    // Verificar vCard
-    if (msg.message?.contactMessage?.vcard) {
-      const vcard = msg.message.contactMessage.vcard;
-      const phoneMatch = vcard.match(/TEL[^:]*:(\+?\d+)/);
-      if (phoneMatch) {
-        contactData.vcardPhone = phoneMatch[1].replace(/\D/g, '');
-      }
-    }
-
-    // Verificar verifiedBizName
-    if ((msg.message as any)?.verifiedBizName) {
-      contactData.verifiedBizName = (msg.message as any).verifiedBizName;
-    }
-
-    // Tentar obter foto de perfil
-    if (this.sock) {
-      try {
-        const profileUrl = await this.sock.profilePictureUrl(chatId, 'image');
-        contactData.hasProfilePicture = !!profileUrl;
-        contactData.profileUrl = profileUrl;
-      } catch (error) {
-        contactData.hasProfilePicture = false;
-      }
-    }
-
-    // LOGAR TODOS OS DADOS COLETADOS
-    this.log(`📊 DADOS DO CONTATO:`);
-    this.log(`   chatId: ${contactData.chatId}`);
-    this.log(`   remoteJid: ${contactData.remoteJid}`);
-    this.log(`   pushName: ${contactData.pushName || 'N/A'}`);
-    this.log(`   isLid: ${contactData.isLid}`);
-
-    if (contactData.lidNumber) {
-      this.log(`   lidNumber (extraído): ${contactData.lidNumber}`);
-    }
-    if (contactData.pushNameAsNumber) {
-      this.log(`   pushName como número: ${contactData.pushNameAsNumber}`);
-    }
-    if (contactData.contextParticipant) {
-      this.log(`   contextParticipant: ${contactData.contextParticipant}`);
-    }
-    if (contactData.vcardPhone) {
-      this.log(`   vCard phone: ${contactData.vcardPhone}`);
-    }
-    if (contactData.verifiedBizName) {
-      this.log(`   verifiedBizName: ${contactData.verifiedBizName}`);
-    }
-    this.log(`   hasProfilePicture: ${contactData.hasProfilePicture}`);
-
-    // RETORNAR O chatId ORIGINAL SEM MODIFICAÇÃO
-    this.log(`➡️ Usando chatId original: ${chatId}`);
-    return chatId;
+    this.log('✅ Typing handler configured');
   }
 
   private async processMessage(msg: WAMessage): Promise<void> {
-    // Ignorar mensagens próprias
+    // Ignore own messages
     if (msg.key.fromMe) return;
 
     const chatId = msg.key.remoteJid!;
     const isGroup = isJidGroup(chatId);
 
-    // Detectar tipo de mensagem e extrair informações
+    // Detect message type
     let messageText = '';
     let hasMedia = false;
     let mediaType: 'audio' | 'image' | 'video' | 'document' | undefined;
     let mediaBuffer: Buffer | undefined;
     let mimetype: string | undefined;
 
-    // Texto
     messageText =
       msg.message?.conversation ||
       msg.message?.extendedTextMessage?.text ||
@@ -397,57 +428,39 @@ export class WhatsAppManager {
       msg.message?.videoMessage?.caption ||
       '';
 
-    // Verificar áudio
     if (msg.message?.audioMessage) {
-      this.log('🎤 Mensagem de áudio detectada!');
       hasMedia = true;
       mediaType = 'audio';
       mimetype = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus';
-
-      // NÃO baixar áudio aqui - deixar para o processador decidir se deve baixar
-      // (apenas se houver agente atribuído)
-      this.log('📋 Áudio marcado para download condicional');
     }
 
-    // Verificar imagem
     if (msg.message?.imageMessage) {
       hasMedia = true;
       mediaType = 'image';
       mimetype = msg.message.imageMessage.mimetype || 'image/jpeg';
     }
 
-    // Verificar vídeo
     if (msg.message?.videoMessage) {
       hasMedia = true;
       mediaType = 'video';
       mimetype = msg.message.videoMessage.mimetype || 'video/mp4';
     }
 
-    // Verificar documento
     if (msg.message?.documentMessage) {
       hasMedia = true;
       mediaType = 'document';
       mimetype = msg.message.documentMessage.mimetype || 'application/octet-stream';
     }
 
-    // Se não há texto nem mídia, ignorar
-    if (!messageText && !hasMedia) {
-      this.log('⚠️ Mensagem sem texto ou mídia, ignorando');
-      return;
-    }
+    if (!messageText && !hasMedia) return;
 
-    // Extrair o remetente real usando método robusto
     let from: string;
-
     if (isGroup) {
-      // Em grupos, usar o participant (quem enviou a mensagem)
       from = msg.key.participant || chatId;
     } else {
-      // Em conversas privadas, identificar o número real
-      from = await this.identifyRealPhone(chatId, msg);
+      from = chatId;
     }
 
-    // Criar contexto da mensagem
     const context: MessageContext = {
       from,
       chatId,
@@ -459,35 +472,17 @@ export class WhatsAppManager {
       mediaType,
       mediaBuffer,
       mimetype,
-      rawMessage: hasMedia ? msg : undefined, // Passar mensagem original para download condicional
+      rawMessage: hasMedia ? msg : undefined,
     };
 
-    // Adicionar informações de grupo se aplicável
     if (isGroup) {
       const groupInfo = this.groups.get(chatId);
       context.groupName = groupInfo?.name || 'Grupo';
       context.participant = msg.key.participant || undefined;
-
-      this.log(`👥 Mensagem de grupo: ${context.groupName}`);
-      this.log(`   De: ${context.participant || 'desconhecido'}`);
-      if (hasMedia) {
-        this.log(`   Tipo: ${mediaType} (${mimetype})`);
-      }
-      this.log(`   Texto: ${messageText.substring(0, 50)}...`);
     } else {
-      this.log(`👤 Mensagem privada`);
-      this.log(`   From: ${from}`);
-      this.log(`   Chat ID: ${chatId}`);
-      if (hasMedia) {
-        this.log(`   Tipo: ${mediaType} (${mimetype})`);
-      }
-      this.log(`   Texto: ${messageText.substring(0, 50)}...`);
-
-      // Atualizar/adicionar chat privado usando o from correto
       this.updatePrivateChat(from, messageText || '[Mídia]');
     }
 
-    // Callback para processar
     if (this.messageCallback) {
       this.messageCallback(context);
     }
@@ -495,10 +490,9 @@ export class WhatsAppManager {
 
   private updatePrivateChat(chatId: string, lastMessage: string): void {
     const existing = this.privateChats.get(chatId);
-
     this.privateChats.set(chatId, {
       id: chatId,
-      phone: chatId.replace('@s.whatsapp.net', ''),
+      phone: chatId.replace('@s.whatsapp.net', '').replace('@lid', ''),
       name: existing?.name,
       isGroup: false,
       lastMessage,
@@ -510,9 +504,7 @@ export class WhatsAppManager {
     if (!this.sock) return;
 
     try {
-      this.log('📋 Carregando grupos...');
-
-      // Buscar grupos
+      this.log('📋 Loading groups...');
       const groups = await this.sock.groupFetchAllParticipating();
 
       this.groups.clear();
@@ -526,192 +518,138 @@ export class WhatsAppManager {
         });
       }
 
-      this.log(`✅ ${this.groups.size} grupos carregados`);
+      this.log(`✅ ${this.groups.size} groups loaded`);
     } catch (error) {
-      this.log('⚠️ Erro ao carregar grupos:', error);
+      this.log('⚠️ Error loading groups:', error);
     }
   }
 
   async disconnect(): Promise<void> {
     try {
-      this.log('🔌 Desconectando...');
+      this.log('🔌 Disconnecting...');
+
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
 
       if (this.sock) {
-        await this.sock.logout();
+        try {
+          await this.sock.logout();
+        } catch (e) {
+          // Ignore logout errors
+        }
+        this.sock.ev.removeAllListeners();
         this.sock = null;
       }
 
       this.handleDisconnected();
-      this.log('✅ Desconectado com sucesso');
+      this.log('✅ Disconnected');
     } catch (error) {
-      this.log('❌ Erro ao desconectar:', error);
-      throw error;
+      this.log('❌ Disconnect error:', error);
+      this.handleDisconnected();
     }
   }
 
   async clearAuth(): Promise<void> {
     try {
       this.log('━'.repeat(40));
-      this.log('🗑️ LIMPEZA COMPLETA DE CREDENCIAIS');
+      this.log('🗑️ CLEARING CREDENTIALS');
       this.log('━'.repeat(40));
 
-      // 1. Desconectar primeiro se estiver conectado
-      if (this.isConnected || this.sock) {
-        this.log('🔌 Desconectando antes de limpar...');
+      // Stop any reconnection attempts
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = null;
+      }
+
+      // Disconnect socket
+      if (this.sock) {
         try {
-          if (this.sock) {
-            await this.sock.logout();
-            this.sock = null;
-          }
-          this.handleDisconnected();
-          // Aguardar um pouco para garantir que o socket fechou
-          await new Promise(resolve => setTimeout(resolve, 1500));
-        } catch (error) {
-          this.log('⚠️ Erro ao desconectar:', error);
+          this.sock.ev.removeAllListeners();
+          await this.sock.logout().catch(() => { });
+        } catch (e) {
+          // Ignore
         }
+        this.sock = null;
       }
 
-      // 2. Limpar pasta de autenticação com retry
-      const authPath = path.join(process.cwd(), 'auth_info_baileys');
+      // Wait a bit
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      if (fs.existsSync(authPath)) {
-        let attempts = 0;
-        const maxAttempts = 3;
-
-        while (attempts < maxAttempts) {
-          try {
-            fs.rmSync(authPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
-            this.log('✅ Pasta de autenticação removida');
-            break;
-          } catch (error: any) {
-            attempts++;
-            if (error.code === 'EBUSY' && attempts < maxAttempts) {
-              this.log(`⏳ Diretório ocupado, tentativa ${attempts}/${maxAttempts}...`);
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            } else {
-              throw error;
-            }
-          }
-        }
+      // Remove auth folder
+      if (fs.existsSync(AUTH_FOLDER)) {
+        fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+        this.log('✅ Auth folder removed');
       }
+
+      // Recreate empty folder
+      fs.mkdirSync(AUTH_FOLDER, { recursive: true });
 
       this.handleDisconnected();
-      this.log('✅ LIMPEZA CONCLUÍDA COM SUCESSO');
+      this.log('✅ CREDENTIALS CLEARED');
       this.log('━'.repeat(40));
     } catch (error) {
-      this.log('❌ Erro ao limpar credenciais:', error);
+      this.log('❌ Error clearing credentials:', error);
       throw error;
     }
   }
 
-  // ===== Typing Indicator =====
   async sendTyping(to: string, isTyping: boolean): Promise<void> {
     try {
-      if (!this.sock || !this.isConnected) {
-        return; // Silenciosamente falha se não conectado
-      }
+      if (!this.sock || !this.isConnected) return;
 
-      // Determinar formato do ID
       let jid = to;
-
       if (!to.includes('@')) {
-        // Se não tem @, assumir que é número de telefone
-        const cleanPhone = to.replace(/\D/g, '');
-        jid = `${cleanPhone}@s.whatsapp.net`;
-      } else if (to.includes('@g.us')) {
-        // Para grupos, usar o JID diretamente
-        jid = to;
-      } else if (to.includes('@s.whatsapp.net')) {
-        jid = to;
-      } else if (to.includes('@lid')) {
-        // Lid não suporta presence update, pular
-        this.log(`⚠️ Lid não suporta indicador de digitação: ${to}`);
-        return;
-      } else {
-        // Tentar adicionar @s.whatsapp.net
         const cleanPhone = to.replace(/\D/g, '');
         jid = `${cleanPhone}@s.whatsapp.net`;
       }
 
-      // Validar se o JID está no formato correto antes de enviar
-      if (!jid.includes('@s.whatsapp.net') && !jid.includes('@g.us')) {
-        this.log(`⚠️ JID inválido para indicador de digitação: ${jid}`);
-        return;
-      }
+      if (to.includes('@lid')) return;
 
-      // Enviar indicador de digitação
-      // API correta do Baileys: sendPresenceUpdate(status, jid)
-      // Status pode ser: 'composing', 'recording', 'paused', 'available', 'unavailable'
       await this.sock.sendPresenceUpdate(isTyping ? 'composing' : 'paused', jid);
-
-      if (isTyping) {
-        this.log(`⌨️ Indicador de digitação ativado para: ${to}`);
-      } else {
-        this.log(`⌨️ Indicador de digitação desativado para: ${to}`);
-      }
     } catch (error) {
-      // Não lançar erro - apenas logar
-      const errorMsg = (error as Error).message;
-      this.log(`⚠️ Erro ao enviar indicador de digitação: ${errorMsg}`);
+      // Silent fail
     }
   }
 
-  // ===== Message Sending =====
   async sendMessage(to: string, message: string | AnyMessageContent): Promise<void> {
     try {
       if (!this.sock || !this.isConnected) {
-        throw new Error('WhatsApp não conectado');
+        throw new Error('WhatsApp not connected');
       }
 
-      this.log(`📤 Enviando mensagem para: ${to}`);
-
-      // Determinar formato do ID
       let jid = to;
-
-      if (to.includes('@g.us')) {
-        // Já é um ID de grupo
-        jid = to;
-        this.log('👥 Enviando para grupo');
-      } else if (to.includes('@s.whatsapp.net')) {
-        // Já é um ID de contato
-        jid = to;
-        this.log('👤 Enviando para contato');
-      } else {
-        // É um número de telefone, converter para formato correto
+      if (!to.includes('@')) {
         const cleanPhone = to.replace(/\D/g, '');
         jid = `${cleanPhone}@s.whatsapp.net`;
-        this.log(`👤 Enviando para contato: ${cleanPhone}`);
       }
 
-      // Enviar mensagem (suporta texto ou objeto de mídia)
       const content = typeof message === 'string' ? { text: message } : message;
       await this.sock.sendMessage(jid, content);
 
-      this.log('✅ Mensagem enviada com sucesso');
+      this.log(`✅ Message sent to: ${to}`);
     } catch (error: any) {
-      this.log('❌ Erro ao enviar mensagem:', error.message);
+      this.log('❌ Send message error:', error.message);
       throw error;
     }
   }
 
-  // ===== Callbacks =====
+  // Callbacks
   onMessage(callback: (context: MessageContext) => void): void {
     this.messageCallback = callback;
-    this.log('✅ Callback de mensagem registrado');
   }
 
   onStatusUpdate(callback: (status: WhatsAppConnection) => void): void {
     this.statusUpdateCallback = callback;
     this.notifyStatusUpdate();
-    this.log('✅ Callback de status registrado');
   }
 
   onTyping(callback: (indicator: TypingIndicator) => void): void {
     this.typingCallback = callback;
-    this.log('✅ Callback de digitação registrado');
   }
 
-  // ===== Status =====
+  // Status
   getStatus(): WhatsAppConnection {
     let status: 'disconnected' | 'connecting' | 'qr' | 'connected' = 'disconnected';
 
@@ -738,7 +676,6 @@ export class WhatsAppManager {
     };
   }
 
-  // ===== Groups and Chats =====
   async getGroups(): Promise<GroupInfo[]> {
     return Array.from(this.groups.values());
   }
@@ -762,7 +699,6 @@ export class WhatsAppManager {
       isGroup: boolean;
     }> = [];
 
-    // Adicionar grupos
     for (const group of this.groups.values()) {
       contacts.push({
         id: group.id,
@@ -772,7 +708,6 @@ export class WhatsAppManager {
       });
     }
 
-    // Adicionar chats privados
     for (const chat of this.privateChats.values()) {
       contacts.push({
         id: chat.id,
@@ -782,7 +717,6 @@ export class WhatsAppManager {
       });
     }
 
-    this.log(`📇 ${contacts.length} contatos (${this.groups.size} grupos + ${this.privateChats.size} privados)`);
     return contacts;
   }
 }
